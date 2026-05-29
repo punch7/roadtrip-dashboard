@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFA500">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Roadtrip">
+<title>Roadtrip — Dallas → LA</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9Ijk2IiBmaWxsPSIjRkZBNTAwIi8+PHRleHQgeD0iNTAlIiB5PSI1NSUiIGZvbnQtc2l6ZT0iMjgwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCI+8J+bo++4jzwvdGV4dD48L3N2Zz4=">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: 'class', theme: { extend: {} } };
+</script>
+<style>
+  html { background:#0b0f19; }
+  body { -webkit-tap-highlight-color: transparent; padding-bottom: env(safe-area-inset-bottom); }
+  .tap { min-height:48px; }
+  details > summary { list-style:none; cursor:pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="dark bg-gray-950 text-gray-100 font-sans antialiased">
+
+<div id="app" class="max-w-md mx-auto min-h-screen flex flex-col">
+
+  <!-- HEADER -->
+  <header class="px-4 pt-4 pb-2 sticky top-0 z-20 bg-gray-950/95 backdrop-blur border-b border-gray-800">
+    <div class="flex items-center justify-between gap-2">
+      <div class="text-sm leading-tight">
+        <div id="dayLabel" class="font-semibold text-gray-100">Dzień —</div>
+        <div id="segLabel" class="text-xs text-gray-400">—</div>
+      </div>
+      <div class="flex items-center gap-1 bg-gray-800 rounded-full p-1" role="group" aria-label="Wybór trasy">
+        <button id="btnLower" class="tap px-3 rounded-full text-xs font-bold transition-colors">DOLNA</button>
+        <button id="btnUpper" class="tap px-3 rounded-full text-xs font-bold transition-colors">GÓRNA</button>
+      </div>
+    </div>
+    <div class="flex items-center justify-between mt-2 text-xs text-gray-400">
+      <button id="btnWhere" class="tap flex items-center gap-1 text-amber-400 active:text-amber-300">📍 <span id="gpsLabel">Gdzie jestem</span></button>
+      <button id="btnRefresh" class="tap flex items-center gap-1 text-amber-400 active:text-amber-300"><span id="refreshIcon">🔄</span> <span id="dataTime">Odśwież</span></button>
+    </div>
+  </header>
+
+  <!-- WERDYKT (górna połowa) -->
+  <section id="verdict" class="px-5 py-6 min-h-[48vh] flex flex-col justify-center transition-colors duration-300">
+    <div id="verdictBadge" class="text-6xl mb-2">⏳</div>
+    <div id="verdictTitle" class="text-3xl font-black leading-none mb-3">Analizuję warunki…</div>
+    <div id="verdictBody" class="text-lg leading-snug font-medium opacity-95"></div>
+    <div id="verdictMeta" class="mt-4 text-xs opacity-80"></div>
+  </section>
+
+  <!-- 4 KAFLE -->
+  <section class="grid grid-cols-2 gap-2 px-3 pb-2">
+    <details id="tileWeather" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 overflow-hidden">
+      <summary class="tap px-3 py-3 flex items-center justify-between">
+        <span class="font-semibold text-sm">🌡️ Pogoda</span>
+        <span id="wStatus" class="text-xs text-gray-400">…</span>
+      </summary>
+      <div id="wBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+
+    <details id="tileAlerts" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 overflow-hidden">
+      <summary class="tap px-3 py-3 flex items-center justify-between">
+        <span class="font-semibold text-sm">⚠️ Alerty</span>
+        <span id="aStatus" class="text-xs text-gray-400">…</span>
+      </summary>
+      <div id="aBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+
+    <details id="tileFire" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 overflow-hidden">
+      <summary class="tap px-3 py-3 flex items-center justify-between">
+        <span class="font-semibold text-sm">🔥 Pożary</span>
+        <span id="fStatus" class="text-xs text-gray-400">…</span>
+      </summary>
+      <div id="fBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+
+    <details id="tileRoad" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 overflow-hidden">
+      <summary class="tap px-3 py-3 flex items-center justify-between">
+        <span class="font-semibold text-sm">🚧 Droga</span>
+        <span id="rStatus" class="text-xs text-gray-400">…</span>
+      </summary>
+      <div id="rBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+  </section>
+
+  <!-- SEKCJE NIŻEJ -->
+  <section class="px-3 pb-2 space-y-2">
+
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between items-center">📋 Plan: dziś i jutro <span class="text-gray-500">▾</span></summary>
+      <div id="planBody" class="px-4 pb-4 text-sm text-gray-300 space-y-3"></div>
+    </details>
+
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between items-center">🔀 Porównaj trasy (dziś) <span class="text-gray-500">▾</span></summary>
+      <div id="compareBody" class="px-4 pb-4 text-xs text-gray-300 overflow-x-auto"></div>
+    </details>
+
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between items-center">✅ Checklisty <span class="text-gray-500">▾</span></summary>
+      <div id="checklistBody" class="px-4 pb-4 text-sm text-gray-300 space-y-4"></div>
+    </details>
+
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between items-center">🆘 Kontakty SOS <span class="text-gray-500">▾</span></summary>
+      <div class="px-4 pb-4 text-sm space-y-2">
+        <a href="tel:911" class="tap flex items-center justify-between bg-red-900/40 rounded-lg px-3 active:bg-red-900/60"><span>🚨 Nagły wypadek</span><span class="font-bold">911</span></a>
+        <a href="tel:511" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>🛣️ Info drogowe</span><span class="font-bold">511</span></a>
+        <a href="tel:18002224357" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>🔧 AAA pomoc drogowa</span><span class="font-bold">1-800-222-4357</span></a>
+        <a href="tel:18002221222" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>☠️ Poison Control</span><span class="font-bold">1-800-222-1222</span></a>
+      </div>
+    </details>
+
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between items-center">🛰️ Dane źródłowe <span class="text-gray-500">▾</span></summary>
+      <div id="sourcesBody" class="px-4 pb-4 text-xs text-gray-400 space-y-2 break-words"></div>
+    </details>
+
+  </section>
+
+  <!-- TRWAŁY BANER -->
+  <footer class="mt-auto px-4 py-3 text-[11px] leading-tight text-amber-200/90 bg-amber-950/40 border-t border-amber-900/50">
+    ⚠️ Pomagam decydować, ale <b>NIE zastępuję rządowych alertów</b>. Włącz <b>Wireless Emergency Alerts</b> w ustawieniach telefonu — tylko one obudzą Cię w nocy.
+  </footer>
+</div>
+
+<script>
+/* ============================================================================
+   ROADTRIP DASHBOARD — vanilla JS, bez build stepu.
+   Sekcje: DANE TRAS → narzędzia (haversine, dzień, słońce) → stan → API →
+   computeVerdict() → render → init.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- DANE TRAS */
+// Trasa DOLNA (gorąca, krótsza). driveKm liczone haversine w kodzie.
+const TRIP_DATA_LOWER = [
+  { day:1,  date:"2026-05-28", from:{name:"Boston BOS",lat:42.366,lng:-71.020}, to:{name:"Dallas DFW",lat:32.897,lng:-97.040}, driveHours:0,   activity:"Lot BOS→DFW 07:05-10:19 DL760, odbiór RV 14:30, zakupy", sleep:"Dallas RV park", knownRisks:["heat"] },
+  { day:2,  date:"2026-05-29", from:{name:"Dallas",lat:32.78,lng:-96.80}, to:{name:"Weatherford",lat:32.76,lng:-97.80}, driveHours:1, activity:"Fort Worth Stockyards 11:00, BBQ Terry Black's, wieczorem ~1h na zachód", sleep:"Weatherford/Mineral Wells", knownRisks:["heat"] },
+  { day:3,  date:"2026-05-30", from:{name:"Weatherford",lat:32.76,lng:-97.80}, to:{name:"Fort Stockton",lat:30.89,lng:-102.88}, driveHours:5, activity:"Długi przejazd na zachód I-20", sleep:"Fort Stockton", knownRisks:["heat","wind"] },
+  { day:4,  date:"2026-05-31", from:{name:"Fort Stockton",lat:30.89,lng:-102.88}, to:{name:"Valentine",lat:30.59,lng:-104.49}, driveHours:3.5, activity:"Balmorhea State Park, → Prada Marfa sesja o zachodzie", sleep:"Desert View RV Park Valentine $40", knownRisks:["heat"] },
+  { day:5,  date:"2026-06-01", from:{name:"Valentine",lat:30.59,lng:-104.49}, to:{name:"White Sands / Alamogordo",lat:32.78,lng:-106.17}, driveHours:4.5, activity:"Przejazd do White Sands", sleep:"Alamogordo/White Sands area", knownRisks:["heat"] },
+  { day:6,  date:"2026-06-02", from:{name:"Alamogordo",lat:32.78,lng:-106.17}, to:{name:"Tucson",lat:32.22,lng:-110.97}, driveHours:5, activity:"White Sands o świcie ($25), potem na zachód", sleep:"Tucson", knownRisks:["heat","wind"] },
+  { day:7,  date:"2026-06-03", from:{name:"Tucson",lat:32.22,lng:-110.97}, to:{name:"Tucson",lat:32.22,lng:-110.97}, driveHours:0, activity:"Saguaro NP rano", sleep:"Tucson", knownRisks:["heat"] },
+  { day:8,  date:"2026-06-04", from:{name:"Tucson",lat:32.22,lng:-110.97}, to:{name:"White Stallion Ranch",lat:32.30,lng:-111.20}, driveHours:0.5, activity:"White Stallion Ranch (TBD), jazda konna/pony dla dzieci", sleep:"ranczo/Tucson", knownRisks:["heat"] },
+  { day:9,  date:"2026-06-05", from:{name:"Tucson",lat:32.22,lng:-110.97}, to:{name:"Phoenix",lat:33.45,lng:-112.07}, driveHours:2, activity:"Przejazd, Queen Creek sesja (zacieniona lokalizacja)", sleep:"Phoenix area", knownRisks:["heat"], anchor:true },
+  { day:10, date:"2026-06-06", from:{name:"Phoenix",lat:33.45,lng:-112.07}, to:{name:"Grand Canyon South Rim",lat:36.06,lng:-112.14}, driveHours:3.5, activity:"Wjazd wyżej, chłodniej", sleep:"Grand Canyon/Tusayan", knownRisks:[] },
+  { day:11, date:"2026-06-07", from:{name:"Grand Canyon",lat:36.06,lng:-112.14}, to:{name:"Page",lat:36.91,lng:-111.46}, driveHours:2.5, activity:"Antelope Canyon, Horseshoe Bend", sleep:"Page", knownRisks:["heat"] },
+  { day:12, date:"2026-06-08", from:{name:"Page",lat:36.91,lng:-111.46}, to:{name:"Williams",lat:35.25,lng:-112.19}, driveHours:2.5, activity:"MD Ranch jazda konna + pony, KOA basen", sleep:"Williams", knownRisks:[] },
+  { day:13, date:"2026-06-09", from:{name:"Williams",lat:35.25,lng:-112.19}, to:{name:"Needles / Lake Havasu",lat:34.48,lng:-114.32}, driveHours:3, activity:"Zjazd na zachód I-40", sleep:"Needles/Lake Havasu (hookup, klima!)", knownRisks:["heat"] },
+  { day:14, date:"2026-06-10", from:{name:"Needles",lat:34.48,lng:-114.32}, to:{name:"Joshua Tree",lat:34.13,lng:-116.31}, driveHours:2.5, activity:"Joshua Tree wieczorem", sleep:"Joshua Tree area", knownRisks:["heat"] },
+  { day:15, date:"2026-06-11", from:{name:"Joshua Tree",lat:34.13,lng:-116.31}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:2.5, activity:"JT o świcie, potem LA, do Barta i Sary", sleep:"LA hotel", knownRisks:["heat"] },
+  { day:16, date:"2026-06-12", from:{name:"Los Angeles",lat:34.05,lng:-118.24}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:0, activity:"Oddanie kampera, hotel", sleep:"LA hotel", knownRisks:[] },
+  { day:17, date:"2026-06-13", from:{name:"Los Angeles",lat:34.05,lng:-118.24}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:0, activity:"LA", sleep:"LA hotel", knownRisks:[] },
+  { day:18, date:"2026-06-14", from:{name:"Los Angeles",lat:34.05,lng:-118.24}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:0, activity:"Bart/Sara, burrito", sleep:"LA hotel", knownRisks:[] },
+  { day:19, date:"2026-06-15", from:{name:"Los Angeles",lat:34.05,lng:-118.24}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:0, activity:"Venice, lody, tattoo", sleep:"LA hotel", knownRisks:[] },
+  { day:20, date:"2026-06-16", from:{name:"Los Angeles",lat:34.05,lng:-118.24}, to:{name:"Los Angeles",lat:34.05,lng:-118.24}, driveHours:0, activity:"Muzeum, spacer", sleep:"LA hotel", knownRisks:[] },
+  { day:21, date:"2026-06-17", from:{name:"Los Angeles LAX",lat:34.05,lng:-118.24}, to:{name:"Lot do Polski",lat:34.05,lng:-118.24}, driveHours:0, activity:"Lot LAX → Polska", sleep:"-", knownRisks:[] },
+];
+
+// Trasa GÓRNA: identyczna z DOLNĄ poza dniami 5–9 (chłodniejsza oś przez
+// Albuquerque / Santa Fe / Flagstaff, dłuższa o ~pół dnia). Zbiega się w
+// Phoenix 5 czerwca (dzień 9).
+const UPPER_OVERRIDE = {
+  5: { day:5, date:"2026-06-01", from:{name:"Valentine",lat:30.59,lng:-104.49}, to:{name:"Las Cruces",lat:32.31,lng:-106.78}, driveHours:4, activity:"Przejazd, White Sands po drodze opcjonalnie świtem", sleep:"Las Cruces", knownRisks:["heat"] },
+  6: { day:6, date:"2026-06-02", from:{name:"Las Cruces",lat:32.31,lng:-106.78}, to:{name:"Albuquerque",lat:35.08,lng:-106.65}, driveHours:3.5, activity:"Wjazd wyżej, chłodniej", sleep:"Albuquerque", knownRisks:[] },
+  7: { day:7, date:"2026-06-03", from:{name:"Albuquerque",lat:35.08,lng:-106.65}, to:{name:"Santa Fe",lat:35.69,lng:-105.94}, driveHours:1, activity:"Santa Fe stare miasto 2100m, chłodno, dzieci", sleep:"Santa Fe", knownRisks:[] },
+  8: { day:8, date:"2026-06-04", from:{name:"Santa Fe",lat:35.69,lng:-105.94}, to:{name:"Flagstaff",lat:35.20,lng:-111.65}, driveHours:5.5, activity:"Długi przejazd wysoką osią I-40", sleep:"Flagstaff", knownRisks:[] },
+  9: { day:9, date:"2026-06-05", from:{name:"Flagstaff",lat:35.20,lng:-111.65}, to:{name:"Phoenix",lat:33.45,lng:-112.07}, driveHours:2.5, activity:"Zjazd do Phoenix na kotwicę", sleep:"Phoenix area", knownRisks:["heat"], anchor:true },
+};
+const TRIP_DATA_UPPER = TRIP_DATA_LOWER.map(d => UPPER_OVERRIDE[d.day] ? UPPER_OVERRIDE[d.day] : d);
+
+const ROUTES = { LOWER: TRIP_DATA_LOWER, UPPER: TRIP_DATA_UPPER };
+const TRIP_START = new Date("2026-05-28T00:00:00");
+const TRIP_DAYS = TRIP_DATA_LOWER.length;
+
+/* ------------------------------------------------------------- NARZĘDZIA */
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); // km
+}
+// Najmniejsza odległość punktu od odcinka trasy (próbkowanie 0..1).
+function distPointToSegment(plat, plng, a, b) {
+  let min = Infinity;
+  for (let t = 0; t <= 1.0001; t += 0.1) {
+    const la = a.lat + (b.lat - a.lat) * t;
+    const ln = a.lng + (b.lng - a.lng) * t;
+    min = Math.min(min, haversine(plat, plng, la, ln));
+  }
+  return min;
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+function fmtHour(h) { // h w godzinach dziesiętnych -> "HH:MM"
+  let hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  if (mm === 60) { hh++; mm = 0; }
+  return pad2(hh) + ":" + pad2(mm);
+}
+function todayKm(seg) { return Math.round(haversine(seg.from.lat, seg.from.lng, seg.to.lat, seg.to.lng)); }
+
+function getCurrentTripDay() {
+  const override = localStorage.getItem('rt_dayOverride');
+  if (override) { const n = parseInt(override,10); if (n>=1 && n<=TRIP_DAYS) return n; }
+  const now = new Date();
+  const diff = Math.floor((now - TRIP_START) / 86400000) + 1;
+  return diff; // może być <1 (przed wyjazdem) lub >TRIP_DAYS (po)
+}
+function getDay(routeKey, dayNum) {
+  return ROUTES[routeKey].find(d => d.day === dayNum) || null;
+}
+// Czy dziś trasy się różnią (różny cel) — wtedy werdykt PORÓWNUJE warianty.
+function routesDiffer(dayNum) {
+  const lo = getDay('LOWER', dayNum), up = getDay('UPPER', dayNum);
+  if (!lo || !up) return false;
+  return Math.abs(lo.to.lat - up.to.lat) > 0.01 || Math.abs(lo.to.lng - up.to.lng) > 0.01;
+}
+
+/* --------------------------------------------------------- SŁOŃCE (SunCalc) */
+// Wbudowany, okrojony SunCalc (Vladimir Agafonkin, BSD) — tylko wschód/zachód.
+const SunCalc = (function () {
+  const PI = Math.PI, rad = PI/180, dayMs = 86400000, J1970 = 2440588, J2000 = 2451545, e = rad*23.4397, J0 = 0.0009;
+  const toJulian = d => d.valueOf()/dayMs - 0.5 + J1970;
+  const fromJulian = j => new Date((j + 0.5 - J1970) * dayMs);
+  const toDays = d => toJulian(d) - J2000;
+  const declination = (l,b) => Math.asin(Math.sin(b)*Math.cos(e) + Math.cos(b)*Math.sin(e)*Math.sin(l));
+  const solarMeanAnomaly = d => rad * (357.5291 + 0.98560028 * d);
+  const eclipticLongitude = M => { const C = rad*(1.9148*Math.sin(M)+0.02*Math.sin(2*M)+0.0003*Math.sin(3*M)); return M + C + rad*102.9372 + PI; };
+  const julianCycle = (d,lw) => Math.round(d - J0 - lw/(2*PI));
+  const approxTransit = (Ht,lw,n) => J0 + (Ht + lw)/(2*PI) + n;
+  const solarTransitJ = (ds,M,L) => J2000 + ds + 0.0053*Math.sin(M) - 0.0069*Math.sin(2*L);
+  const hourAngle = (h,phi,d) => Math.acos((Math.sin(h) - Math.sin(phi)*Math.sin(d)) / (Math.cos(phi)*Math.cos(d)));
+  function getTimes(date, lat, lng) {
+    const lw = rad*-lng, phi = rad*lat, d = toDays(date), n = julianCycle(d, lw), ds = approxTransit(0, lw, n);
+    const M = solarMeanAnomaly(ds), L = eclipticLongitude(M), dec = declination(L, 0);
+    const Jnoon = solarTransitJ(ds, M, L), h0 = -0.833*rad;
+    const w = hourAngle(h0, phi, dec), a = approxTransit(w, lw, n), Jset = solarTransitJ(a, M, L);
+    return { sunrise: fromJulian(Jnoon - (Jset - Jnoon)), sunset: fromJulian(Jset) };
+  }
+  return { getTimes };
+})();
+function fmtTime(date) {
+  try { return date.toLocaleTimeString('pl-PL', { hour:'2-digit', minute:'2-digit' }); }
+  catch (e) { return '--:--'; }
+}
+
+/* --------------------------------------------------------------- STAN APKI */
+const state = {
+  route: localStorage.getItem('rt_route') || 'LOWER',
+  day: getCurrentTripDay(),
+  position: null,          // {lat,lng,accuracy}
+  detected: null,          // 'LOWER' | 'UPPER' | 'OFF' | null
+  detectedInfo: null,      // tekst pomocniczy
+  weather: {},             // ptKey -> {tempC, windKmh, shortForecast, hasStorm, name}
+  alertsByPt: {},          // ptKey -> [{event, severity, until}]
+  fires: [],               // [{name, lat, lng}]
+  road: { status:'unknown', note:'' },
+  dataTime: null,          // Date ostatnich udanych danych
+  online: navigator.onLine,
+  errors: [],              // surowe komunikaty do "Dane źródłowe"
+};
+
+function ptKey(p){ return p.lat.toFixed(2) + ',' + p.lng.toFixed(2); }
+function clampDay(){ return Math.min(Math.max(state.day,1), TRIP_DAYS); }
+
+/* --------------------------------------------------- CACHE (localStorage) */
+function cacheSet(key, data){ try { localStorage.setItem('rt_cache_'+key, JSON.stringify({t:Date.now(), data})); } catch(e){} }
+function cacheGet(key){ try { const r = localStorage.getItem('rt_cache_'+key); return r ? JSON.parse(r) : null; } catch(e){ return null; } }
+
+/* --------------------------------------------------------- FETCH (8s, bezpieczny) */
+async function fetchJSON(url, opts) {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(url, Object.assign({ signal: ctrl.signal, headers: { 'Accept':'application/geo+json,application/json' } }, opts||{}));
+    clearTimeout(tid);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch (e) { clearTimeout(tid); throw e; }
+}
+
+/* ----------------------------------------------------------------- POGODA (NWS) */
+async function getForecastForPoint(p) {
+  const key = ptKey(p);
+  try {
+    const pts = await fetchJSON(`https://api.weather.gov/points/${p.lat.toFixed(4)},${p.lng.toFixed(4)}`);
+    const fcUrl = pts && pts.properties && pts.properties.forecast;
+    if (!fcUrl) throw new Error('brak URL prognozy');
+    const fc = await fetchJSON(fcUrl);
+    const periods = (fc.properties && fc.properties.periods) || [];
+    const day = periods.find(pp => pp.isDaytime) || periods[0];
+    if (!day) throw new Error('brak okresów');
+    const tempC = day.temperatureUnit === 'F' ? (day.temperature - 32) * 5/9 : day.temperature;
+    const windMatch = String(day.windSpeed||'').match(/(\d+)\s*(?:to\s*(\d+))?/);
+    let windMph = 0;
+    if (windMatch) windMph = parseInt(windMatch[2] || windMatch[1], 10) || 0;
+    const windKmh = windMph * 1.60934;
+    const sf = (day.shortForecast || '').toLowerCase();
+    const hasStorm = /thunder|storm|tstorm|severe/.test(sf);
+    const res = { tempC, windKmh, shortForecast: day.shortForecast, hasStorm, name: p.name };
+    cacheSet('wx_'+key, res);
+    return res;
+  } catch (e) {
+    state.errors.push(`Pogoda ${p.name}: ${e.message}`);
+    const c = cacheGet('wx_'+key);
+    return c ? Object.assign({ stale:true, staleAt:c.t }, c.data) : null;
+  }
+}
+
+/* --------------------------------------------------------------- ALERTY (NWS) */
+const ALERT_FILTER = [/flash flood/i, /flood/i, /extreme heat|excessive heat|heat warning/i, /dust storm/i, /red flag/i, /severe thunderstorm/i, /high wind/i];
+function severityFromEvent(ev) {
+  const s = ev.toLowerCase();
+  if (/advisory|watch/.test(s)) return 'advisory';
+  return 'warning'; // Warning lub Statement traktujemy poważnie
+}
+async function getAlertsForPoint(p) {
+  const key = ptKey(p);
+  try {
+    const j = await fetchJSON(`https://api.weather.gov/alerts/active?point=${p.lat.toFixed(4)},${p.lng.toFixed(4)}`);
+    const feats = (j.features || []);
+    const out = [];
+    feats.forEach(f => {
+      const ev = (f.properties && f.properties.event) || '';
+      if (ALERT_FILTER.some(rx => rx.test(ev))) {
+        out.push({ event: ev, severity: severityFromEvent(ev), until: f.properties.ends || f.properties.expires || '' });
+      }
+    });
+    cacheSet('al_'+key, out);
+    return out;
+  } catch (e) {
+    state.errors.push(`Alerty ${p.name}: ${e.message}`);
+    const c = cacheGet('al_'+key);
+    return c ? c.data.map(a => Object.assign({ stale:true }, a)) : null;
+  }
+}
+
+/* ----------------------------------------------------------------- POŻARY (WFIGS) */
+async function getFires(bbox) {
+  const url = `https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Incident_Locations_Current/FeatureServer/0/query`
+    + `?where=1%3D1&outFields=IncidentName,IncidentSize,FireDiscoveryDateTime`
+    + `&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
+    + `&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects`
+    + `&returnGeometry=true&outSR=4326&f=geojson`;
+  try {
+    const j = await fetchJSON(url);
+    const fires = (j.features || []).map(f => ({
+      name: (f.properties && (f.properties.IncidentName || f.properties.incident_name)) || 'Pożar bez nazwy',
+      size: f.properties && f.properties.IncidentSize,
+      lat: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[1] : null,
+      lng: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[0] : null,
+    })).filter(f => f.lat != null && f.lng != null);
+    cacheSet('fires', fires);
+    return fires;
+  } catch (e) {
+    state.errors.push(`Pożary WFIGS: ${e.message}`);
+    const c = cacheGet('fires');
+    return c ? c.data.map(f => Object.assign({ stale:true }, f)) : null;
+  }
+}
+// Najbliższy pożar do odcinka danej trasy dziś.
+function nearestFireToRoute(routeKey) {
+  if (!state.fires || !state.fires.length) return null;
+  const seg = getDay(routeKey, clampDay());
+  if (!seg) return null;
+  let best = null;
+  state.fires.forEach(f => {
+    const d = distPointToSegment(f.lat, f.lng, seg.from, seg.to);
+    if (!best || d < best.dist) best = { name: f.name, dist: d, lat: f.lat, lng: f.lng };
+  });
+  return best;
+}
+
+/* ----------------------------------------------------------------- DROGA (511) */
+// Feedy stanowe zwykle blokują CORS w przeglądarce -> degradujemy do "sprawdź
+// ręcznie" (żółty, ale werdykt NIE eskaluje). Próbujemy mimo to (best-effort).
+const STATE_511 = [
+  { key:'TX', name:'TxDOT DriveTexas', url:'https://drivetexas.org/' },
+  { key:'NM', name:'NMRoads', url:'https://www.nmroads.com/' },
+  { key:'AZ', name:'AZ511', url:'https://az511.gov/' },
+  { key:'CA', name:'Caltrans QuickMap', url:'https://quickmap.dot.ca.gov/' },
+];
+async function getRoadStatus() {
+  // Próba lekkiego feedu Caltrans (GeoJSON). Jeśli padnie/CORS -> unknown.
+  try {
+    // Celowo krótka próba; większość stanów nie wystawia publicznego CORS-GeoJSON.
+    const j = await fetchJSON('https://quickmap.dot.ca.gov/data/lcs2way.json');
+    if (j) { cacheSet('road', { status:'ok', note:'Caltrans odpowiedział' }); return { status:'ok', note:'Caltrans: brak wykrytych zamknięć na trasie (dane surowe)' }; }
+  } catch (e) {
+    state.errors.push(`Droga (feedy stanowe): ${e.message} — typowo CORS, sprawdź ręcznie`);
+  }
+  const c = cacheGet('road');
+  return c ? Object.assign({ stale:true }, c.data) : { status:'unknown', note:'Feedy stanowe niedostępne w przeglądarce — potwierdź ręcznie na 511.' };
+}
+
+/* ------------------------------------------------------------ GEOLOKALIZACJA */
+function detectStage() {
+  if (!state.position) { state.detected = null; state.detectedInfo = null; return; }
+  const d = clampDay();
+  const lo = getDay('LOWER', d), up = getDay('UPPER', d);
+  const cand = [];
+  if (lo) cand.push({ route:'LOWER', dist: distPointToSegment(state.position.lat, state.position.lng, lo.from, lo.to), name: lo.to.name });
+  if (up) cand.push({ route:'UPPER', dist: distPointToSegment(state.position.lat, state.position.lng, up.from, up.to), name: up.to.name });
+  cand.sort((a,b) => a.dist - b.dist);
+  const nearest = cand[0];
+  if (!nearest) { state.detected = null; return; }
+  if (nearest.dist > 80) {
+    // Poza obiema trasami — wskaż najbliższy punkt "to" któregokolwiek dnia.
+    let np = null;
+    ROUTES[state.route].forEach(seg => {
+      const dd = haversine(state.position.lat, state.position.lng, seg.to.lat, seg.to.lng);
+      if (!np || dd < np.dist) np = { name: seg.to.name, dist: dd, day: seg.day };
+    });
+    state.detected = 'OFF';
+    state.detectedInfo = np ? `Jesteś poza planem. Najbliższy punkt: ${np.name} (${Math.round(np.dist)} km, dzień ${np.day}).` : 'Jesteś poza planem.';
+  } else {
+    state.detected = nearest.route;
+    state.detectedInfo = `Wykryto trasę ${nearest.route==='LOWER'?'DOLNĄ':'GÓRNĄ'} (≈${Math.round(nearest.dist)} km od osi).`;
+  }
+}
+function requestPosition(announce) {
+  if (!('geolocation' in navigator)) { state.detectedInfo = 'Brak geolokalizacji w przeglądarce.'; renderHeader(); return; }
+  if (announce) document.getElementById('gpsLabel').textContent = 'Szukam GPS…';
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      state.position = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      detectStage();
+      renderAll();
+    },
+    err => {
+      state.detectedInfo = 'GPS odmówiony/niedostępny — używam celu aktywnej trasy.';
+      renderHeader();
+    },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+  );
+}
+
+/* =========================================================== computeVerdict() */
+// Ocena pojedynczej trasy: zwraca {route, color, reasons[], tempC, windKmh, ...}.
+function escalate(a, level) {
+  const rank = { green:1, yellow:2, red:3 };
+  if (rank[level] > rank[a.color]) a.color = level;
+}
+function relevantAlerts(routeKey) {
+  const seg = getDay(routeKey, clampDay());
+  const keys = new Set([ptKey(seg.from), ptKey(seg.to)]);
+  if (state.detected === routeKey && state.position) keys.add(ptKey(state.position));
+  const out = [];
+  keys.forEach(k => { (state.alertsByPt[k] || []).forEach(al => out.push(al)); });
+  return out;
+}
+function assessRoute(routeKey) {
+  const seg = getDay(routeKey, clampDay());
+  const a = { route: routeKey, color: 'green', reasons: [], seg, tempC: null, windKmh: null, anyData: false };
+  const w = state.weather[ptKey(seg.to)];
+  if (w) { a.tempC = w.tempC; a.windKmh = w.windKmh; a.storm = w.hasStorm; a.anyData = true; }
+  const al = relevantAlerts(routeKey);
+  if (al.length) a.anyData = true;
+  a.nearestFire = nearestFireToRoute(routeKey);
+  if (a.nearestFire) a.anyData = true;
+
+  // Priorytety (konserwatywnie):
+  const warning = al.find(x => x.severity === 'warning');
+  if (warning) { a.color = 'red'; a.reasons.push(`Ostrzeżenie NWS: ${warning.event}`); }
+  if (a.nearestFire && a.nearestFire.dist < 50) { escalate(a,'red'); a.reasons.push(`Pożar „${a.nearestFire.name}" ${Math.round(a.nearestFire.dist)} km od trasy`); }
+  if (state.road.status === 'closed') { escalate(a,'red'); a.reasons.push('Droga zamknięta'); }
+
+  if (a.color !== 'red') {
+    if (a.tempC != null && a.tempC > 37) { escalate(a,'yellow'); a.reasons.push(`Upał ${Math.round(a.tempC)}°C w ${seg.to.name}`); }
+    if (a.windKmh != null && a.windKmh > 40) { escalate(a,'yellow'); a.reasons.push(`Wiatr ${Math.round(a.windKmh)} km/h`); }
+    if (a.storm) { escalate(a,'yellow'); a.reasons.push('Burze w prognozie'); }
+    if (a.nearestFire && a.nearestFire.dist >= 50 && a.nearestFire.dist < 150) { escalate(a,'yellow'); a.reasons.push(`Pożar „${a.nearestFire.name}" ${Math.round(a.nearestFire.dist)} km — monitoruj`); }
+    const adv = al.find(x => x.severity === 'advisory');
+    if (adv) { escalate(a,'yellow'); a.reasons.push(`Advisory NWS: ${adv.event}`); }
+  }
+  return a;
+}
+// Optymalna godzina wyjazdu: dojazd przed 12:00, bufor 30 min, nie przed 5:30.
+function optimalDeparture(driveHours) {
+  if (!driveHours || driveHours <= 0) return null;
+  let depart = 12 - driveHours - 0.5;
+  if (depart < 5.5) depart = 5.5;
+  return fmtHour(depart);
+}
+function routeName(k){ return k === 'LOWER' ? 'DOLNĄ' : 'GÓRNĄ'; }
+function routeNameShort(k){ return k === 'LOWER' ? 'Dół' : 'Góra'; }
+function routeInstr(k){ return k === 'LOWER' ? 'dołem' : 'górą'; } // jedziesz ...
+
+function computeVerdict() {
+  // Przed wyjazdem / po locie powrotnym.
+  if (state.day < 1) {
+    const days = 1 - state.day + 1;
+    return { color:'green', badge:'🧳', title:`Wyjazd za ${Math.max(0, -state.day + 1)} dni`, body:'Czas na pre-trip checklistę poniżej. Sprawdź kampera, dokumenty i zapas wody.', meta:'' };
+  }
+  if (state.day > TRIP_DAYS) {
+    return { color:'green', badge:'🏁', title:'Po trasie', body:'Roadtrip zakończony. Bezpiecznego powrotu!', meta:'' };
+  }
+
+  const d = clampDay();
+  const allDataMissing = Object.keys(state.weather).length === 0 && Object.keys(state.alertsByPt).length === 0 && (!state.fires || !state.fires.length) && state.errors.length > 0;
+
+  // Wszystkie źródła padły -> nie eskaluj do 🔴, ale wymuś weryfikację.
+  if (allDataMissing) {
+    return { color:'yellow', badge:'🟡', title:'Nie mogę zweryfikować warunków',
+      body:'Żadne źródło danych nie odpowiedziało. Sprawdź NWS (weather.gov) i 511 ręcznie zanim ruszysz.',
+      meta:'' };
+  }
+
+  const differ = routesDiffer(d);
+  const activeSeg = getDay(state.route, d);
+
+  if (!differ) {
+    const a = assessRoute(state.route);
+    return buildSingle(a);
+  }
+  const lo = assessRoute('LOWER');
+  const up = assessRoute('UPPER');
+  return buildCompare(lo, up);
+}
+
+function buildSingle(a) {
+  const seg = a.seg;
+  const dep = optimalDeparture(seg.driveHours);
+  const km = todayKm(seg);
+  if (seg.driveHours === 0) {
+    // Dzień na miejscu — oceniamy warunki, ale nie ma wyjazdu.
+    if (a.color === 'red')   return { color:'red',   badge:'🔴', title:'UWAŻAJ NA MIEJSCU', body: a.reasons.join('. ') + '.', meta:'Dziś bez przejazdu.' };
+    if (a.color === 'yellow')return { color:'yellow',badge:'🟡', title:'DZIEŃ NA MIEJSCU — ostrożnie', body: a.reasons.join('. ') + '.', meta:'Dziś bez przejazdu.' };
+    return { color:'green', badge:'🟢', title:'DZIEŃ NA MIEJSCU', body:`Bez przejazdu. ${seg.activity}`, meta:'Warunki czyste.' };
+  }
+  if (a.color === 'red') {
+    return { color:'red', badge:'🔴', title:'CZEKAJ / NIE JEDŹ', body: a.reasons.join('. ') + '.', meta:`Trasa ${routeName(state.route)} • ${km} km • potwierdź zanim ruszysz.` };
+  }
+  if (a.color === 'yellow') {
+    return { color:'yellow', badge:'🟡', title:'OSTROŻNIE', body: a.reasons.join('. ') + `. Wyjedź o ${dep}, dojazd przed 12:00.`, meta:`Trasa ${routeName(state.route)} • ${km} km` };
+  }
+  return { color:'green', badge:'🟢', title:'JEDŹ', body:`Trasą ${routeName(state.route)}, wyjedź o ${dep}. Warunki czyste.`, meta:`${km} km • ${seg.to.name}` };
+}
+
+function buildCompare(lo, up) {
+  const active = state.route === 'LOWER' ? lo : up;
+  const other  = state.route === 'LOWER' ? up : lo;
+  const tline = (x) => x.tempC != null ? `${Math.round(x.tempC)}°C` : 'temp ?';
+  const cmp = `Dół: ${tline(lo)} w ${lo.seg.to.name} (${lo.seg.driveHours}h). Góra: ${tline(up)} w ${up.seg.to.name} (${up.seg.driveHours}h).`;
+
+  // Oba czerwone.
+  if (lo.color === 'red' && up.color === 'red') {
+    return { color:'red', badge:'🔴', title:'OBA WARIANTY ZAGROŻONE', body:`${lo.reasons.concat(up.reasons).slice(0,3).join('. ')}. Zostań, sprawdź jutro.`, meta: cmp };
+  }
+  // Aktywna czerwona, druga lepsza -> ZMIEŃ TRASĘ.
+  if (active.color === 'red' && other.color !== 'red') {
+    const dep = optimalDeparture(other.seg.driveHours);
+    return { color:'red', badge:'🔴', title:`ZMIEŃ NA TRASĘ ${routeName(other.route)}`,
+      body:`${active.reasons.join('. ')}. Trasa ${routeName(other.route)} czysta → przejdź na nią, wyjedź o ${dep}.`,
+      meta: cmp + ` Przełącz trasę w nagłówku.` };
+  }
+  // Wybór lepszego wariantu, gdy żaden nie jest czerwony.
+  const rank = { green:1, yellow:2, red:3 };
+  let rec = active;
+  if (rank[other.color] < rank[active.color]) rec = other;
+  else if (rank[other.color] === rank[active.color] && other.tempC != null && active.tempC != null && other.tempC < active.tempC - 5) rec = other;
+
+  const dep = optimalDeparture(rec.seg.driveHours);
+
+  if (rec.route !== active.route) {
+    // Rekomendujemy zmianę, choć aktywna nie jest czerwona.
+    return { color:'yellow', badge:'🟡', title:`ROZWAŻ TRASĘ ${routeName(rec.route)}`,
+      body:`${cmp} Jedziesz ${routeInstr(active.route)}${active.reasons.length? ' ('+active.reasons[0]+')':''}. Chłodniej trasą ${routeName(rec.route)} — rekomendacja: przełącz, wyjedź o ${dep}.`,
+      meta:`Aktywna: ${routeName(active.route)}` };
+  }
+  if (active.color === 'yellow') {
+    return { color:'yellow', badge:'🟡', title:'OSTROŻNIE — zostań na swojej trasie',
+      body:`${cmp} ${active.reasons.join('. ')}. Trasa ${routeName(active.route)} nadal najlepsza — wyjedź o ${dep}.`,
+      meta:`Aktywna: ${routeName(active.route)}` };
+  }
+  // Aktywna zielona i najlepsza.
+  return { color:'green', badge:'🟢', title:'JEDŹ', body:`Trasą ${routeName(active.route)}, wyjedź o ${dep}. ${cmp} Warunki czyste.`, meta:`Aktywna: ${routeName(active.route)} • ${todayKm(active.seg)} km` };
+}
+
+/* ================================================================= RENDER */
+const COLOR = {
+  green:  { bg:'bg-green-700',  border:'border-green-500',  text:'text-green-300' },
+  yellow: { bg:'bg-yellow-600', border:'border-yellow-400', text:'text-yellow-300' },
+  red:    { bg:'bg-red-700',    border:'border-red-500',    text:'text-red-300' },
+};
+function tileColor(el, statusEl, color, label) {
+  el.className = el.className.replace(/border-(gray|green|yellow|red)-\d+/g, '');
+  el.classList.add('border-' + ({green:'green-500',yellow:'yellow-400',red:'red-500',gray:'gray-600'}[color] || 'gray-600'));
+  statusEl.textContent = label;
+  statusEl.className = 'text-xs ' + ({green:'text-green-400',yellow:'text-yellow-300',red:'text-red-400',gray:'text-gray-400'}[color] || 'text-gray-400');
+}
+
+function renderHeader() {
+  const d = state.day;
+  const dlbl = document.getElementById('dayLabel');
+  const slbl = document.getElementById('segLabel');
+  if (d < 1) { dlbl.textContent = 'Przed wyjazdem'; slbl.textContent = `Start ${TRIP_START.toISOString().slice(0,10)}`; }
+  else if (d > TRIP_DAYS) { dlbl.textContent = 'Po trasie'; slbl.textContent = 'LA → Polska'; }
+  else {
+    const seg = getDay(state.route, d);
+    dlbl.textContent = `Dzień ${d}/${TRIP_DAYS}`;
+    slbl.textContent = `${seg.from.name} → ${seg.to.name}`;
+  }
+  // Toggle trasy.
+  const bl = document.getElementById('btnLower'), bu = document.getElementById('btnUpper');
+  const on = 'bg-amber-500 text-gray-950', off = 'text-gray-300';
+  bl.className = `tap px-3 rounded-full text-xs font-bold transition-colors ${state.route==='LOWER'?on:off}`;
+  bu.className = `tap px-3 rounded-full text-xs font-bold transition-colors ${state.route==='UPPER'?on:off}`;
+
+  // GPS label.
+  const g = document.getElementById('gpsLabel');
+  if (state.detected === 'OFF') g.textContent = 'Poza planem';
+  else if (state.detected) g.textContent = `GPS: trasa ${state.detected==='LOWER'?'dolna':'górna'}`;
+  else g.textContent = 'Gdzie jestem';
+
+  // Data time + offline.
+  const dt = document.getElementById('dataTime');
+  if (!state.online) dt.textContent = 'OFFLINE';
+  else if (state.dataTime) dt.textContent = 'Dane z ' + fmtTime(state.dataTime);
+  else dt.textContent = 'Odśwież';
+}
+
+function renderVerdict() {
+  const v = computeVerdict();
+  const sec = document.getElementById('verdict');
+  const c = COLOR[v.color] || COLOR.green;
+  sec.className = `px-5 py-6 min-h-[48vh] flex flex-col justify-center transition-colors duration-300 ${c.bg} text-white`;
+  document.getElementById('verdictBadge').textContent = v.badge;
+  document.getElementById('verdictTitle').textContent = v.title;
+  document.getElementById('verdictBody').textContent = v.body;
+
+  let meta = v.meta || '';
+  const parts = [];
+  if (state.dataTime) parts.push('Dane z ' + fmtTime(state.dataTime));
+  else parts.push('Brak świeżych danych');
+  if (state.detectedInfo) parts.push(state.detectedInfo);
+  if (!state.online) parts.push('🔴 OFFLINE — potwierdź zanim ruszysz');
+  document.getElementById('verdictMeta').innerHTML =
+    (meta ? `<div class="mb-1 font-semibold">${meta}</div>` : '') +
+    `<div>${parts.join(' • ')}</div>`;
+}
+
+function renderTiles() {
+  const d = clampDay();
+  // POGODA
+  const wEl = document.getElementById('tileWeather'), wB = document.getElementById('wBody');
+  const segs = routesDiffer(d) ? [['Dół', getDay('LOWER',d)], ['Góra', getDay('UPPER',d)]] : [['', getDay(state.route,d)]];
+  let wColor = 'gray', wRows = [], hottest = null;
+  const seen = new Set();
+  segs.forEach(([tag, seg]) => {
+    [['→', seg.to], ['z', seg.from]].forEach(([role, p]) => {
+      const w = state.weather[ptKey(p)];
+      if (!w) { wRows.push(`<div>${tag?tag+' ':''}${role} ${p.name}: <span class="text-gray-500">brak danych</span></div>`); return; }
+      const t = Math.round(w.tempC);
+      let col = t < 30 ? 'green' : (t <= 37 ? 'yellow' : 'red');
+      if (w.hasStorm || w.windKmh > 40) col = col === 'red' ? 'red' : (col === 'green' ? 'yellow' : col);
+      if (col === 'red') wColor = 'red'; else if (col === 'yellow' && wColor !== 'red') wColor = 'yellow'; else if (wColor === 'gray') wColor = 'green';
+      if (hottest == null || w.tempC > hottest) hottest = w.tempC;
+      wRows.push(`<div>${tag?tag+' ':''}${role} ${p.name}: <b>${t}°C</b>, ${w.shortForecast||''}${w.windKmh>40?` 💨${Math.round(w.windKmh)}km/h`:''}${w.stale?' <span class="text-amber-400">(cache)</span>':''}</div>`);
+    });
+  });
+  wB.innerHTML = wRows.join('') || '<div class="text-gray-500">Brak danych pogodowych.</div>';
+  tileColor(wEl, document.getElementById('wStatus'), wColor, hottest!=null ? `${Math.round(hottest)}°C` : '—');
+
+  // ALERTY
+  const aEl = document.getElementById('tileAlerts'), aB = document.getElementById('aBody');
+  let aColor = 'gray', aRows = [], anyAlertData = false, worst = 'none';
+  segs.forEach(([tag, seg]) => {
+    [['→', seg.to], ['z', seg.from]].forEach(([role, p]) => {
+      const k = ptKey(p);
+      if (!(k in state.alertsByPt)) return;
+      anyAlertData = true;
+      const list = state.alertsByPt[k];
+      if (!list.length) { aRows.push(`<div>${tag?tag+' ':''}${p.name}: <span class="text-green-400">brak</span></div>`); }
+      list.forEach(al => {
+        if (al.severity === 'warning') worst = 'warning'; else if (worst !== 'warning') worst = 'advisory';
+        aRows.push(`<div class="${al.severity==='warning'?'text-red-400':'text-yellow-300'}">${tag?tag+' ':''}${p.name}: ${al.event}${al.stale?' (cache)':''}</div>`);
+      });
+    });
+  });
+  if (!anyAlertData) { aRows = ['<div class="text-gray-500">Brak danych o alertach.</div>']; aColor = 'gray'; }
+  else aColor = worst === 'warning' ? 'red' : (worst === 'advisory' ? 'yellow' : 'green');
+  aB.innerHTML = aRows.join('');
+  tileColor(aEl, document.getElementById('aStatus'), aColor, worst==='warning'?'WARNING':(worst==='advisory'?'advisory':(anyAlertData?'brak':'—')));
+
+  // POŻARY
+  const fEl = document.getElementById('tileFire'), fB = document.getElementById('fBody');
+  let fColor = 'gray', fRows = [];
+  if (state.fires == null) { fRows = ['<div class="text-gray-500">Brak danych o pożarach.</div>']; }
+  else {
+    let minDist = Infinity;
+    (routesDiffer(d) ? ['LOWER','UPPER'] : [state.route]).forEach(rk => {
+      const nf = nearestFireToRoute(rk);
+      if (nf) {
+        minDist = Math.min(minDist, nf.dist);
+        const col = nf.dist < 100 ? 'red' : (nf.dist < 250 ? 'yellow' : 'green');
+        fRows.push(`<div class="${col==='red'?'text-red-400':(col==='yellow'?'text-yellow-300':'')}">${routesDiffer(d)?(rk==='LOWER'?'Dół: ':'Góra: '):''}„${nf.name}" ${Math.round(nf.dist)} km</div>`);
+      }
+    });
+    if (!fRows.length) fRows = [`<div class="text-green-400">Brak pożarów w promieniu 250 km.</div>`];
+    fColor = minDist < 100 ? 'red' : (minDist < 250 ? 'yellow' : 'green');
+    if (minDist === Infinity) fColor = 'green';
+  }
+  fB.innerHTML = fRows.join('');
+  tileColor(fEl, document.getElementById('fStatus'), fColor, fColor==='red'?'BLISKO':(fColor==='yellow'?'monitoruj':(state.fires==null?'—':'brak')));
+
+  // DROGA
+  const rEl = document.getElementById('tileRoad'), rB = document.getElementById('rBody');
+  let rColor = state.road.status === 'closed' ? 'red' : (state.road.status === 'ok' ? 'green' : 'yellow');
+  const links = STATE_511.map(s => `<a class="text-amber-400 underline" href="${s.url}" target="_blank" rel="noopener">${s.name}</a>`).join(' · ');
+  rB.innerHTML = `<div>${state.road.note || 'Status nieznany.'}</div><div class="mt-1">Sprawdź ręcznie: ${links}</div>`;
+  tileColor(rEl, document.getElementById('rStatus'), rColor, state.road.status === 'ok' ? 'ok' : (state.road.status==='closed'?'ZAMKNIĘTA':'sprawdź'));
+}
+
+function planCard(label, dayNum) {
+  if (dayNum < 1 || dayNum > TRIP_DAYS) return `<div class="text-gray-500">${label}: poza trasą.</div>`;
+  const seg = getDay(state.route, dayNum);
+  const sun = SunCalc.getTimes(new Date(seg.date + 'T12:00:00Z'), seg.to.lat, seg.to.lng);
+  const altSeg = routesDiffer(dayNum) ? getDay(state.route === 'LOWER' ? 'UPPER':'LOWER', dayNum) : null;
+  return `<div class="bg-gray-800/60 rounded-lg p-3">
+    <div class="font-semibold text-gray-100">${label} — dzień ${dayNum} (${seg.date})</div>
+    <div class="text-amber-300 text-sm">${seg.from.name} → ${seg.to.name} • ${todayKm(seg)} km • ${seg.driveHours}h</div>
+    <div class="mt-1">${seg.activity}</div>
+    <div class="mt-1 text-gray-400">🛏️ ${seg.sleep}</div>
+    <div class="text-gray-400">🌅 ${fmtTime(sun.sunrise)} • 🌇 ${fmtTime(sun.sunset)}</div>
+    ${altSeg ? `<div class="mt-1 text-xs text-gray-500">Wariant ${state.route==='LOWER'?'GÓRNY':'DOLNY'}: ${altSeg.from.name} → ${altSeg.to.name} (${altSeg.driveHours}h)</div>`:''}
+  </div>`;
+}
+function renderPlan() {
+  const el = document.getElementById('planBody');
+  el.innerHTML = planCard('Dziś', state.day) + planCard('Jutro', state.day + 1);
+}
+
+function renderCompare() {
+  const el = document.getElementById('compareBody');
+  const d = clampDay();
+  if (!routesDiffer(d)) {
+    const seg = getDay(state.route, d);
+    el.innerHTML = `<p>Dziś (dzień ${d}) obie trasy są wspólne: <b>${seg.from.name} → ${seg.to.name}</b>. Brak wyboru do porównania.</p>`;
+    return;
+  }
+  const lo = assessRoute('LOWER'), up = assessRoute('UPPER');
+  const row = (a) => `<tr class="border-t border-gray-800">
+    <td class="py-1 pr-2 font-semibold">${routeName(a.route)}</td>
+    <td class="py-1 pr-2">${a.tempC!=null?Math.round(a.tempC)+'°C':'?'}</td>
+    <td class="py-1 pr-2">${a.seg.driveHours}h / ${todayKm(a.seg)}km</td>
+    <td class="py-1 pr-2">${a.nearestFire?Math.round(a.nearestFire.dist)+'km':'—'}</td>
+    <td class="py-1 ${a.color==='red'?'text-red-400':a.color==='yellow'?'text-yellow-300':'text-green-400'}">${a.color==='red'?'🔴':a.color==='yellow'?'🟡':'🟢'}</td>
+  </tr>`;
+  const rank = { green:1,yellow:2,red:3 };
+  const better = rank[lo.color] < rank[up.color] ? 'DOLNA' : rank[up.color] < rank[lo.color] ? 'GÓRNA' : (lo.tempC!=null&&up.tempC!=null ? (lo.tempC<=up.tempC?'DOLNA':'GÓRNA') : 'DOLNA');
+  el.innerHTML = `<table class="w-full text-left"><thead><tr class="text-gray-500"><th class="pr-2">Trasa</th><th class="pr-2">Cel °C</th><th class="pr-2">Jazda</th><th class="pr-2">Pożar</th><th>Ocena</th></tr></thead><tbody>${row(lo)}${row(up)}</tbody></table>
+    <p class="mt-2">Rekomendacja: <b>trasa ${better}</b>${lo.reasons.length||up.reasons.length?' — '+(better==='DOLNA'?lo:up).reasons.concat('').join('; ').replace(/; $/,''):''}.</p>`;
+}
+
+/* ----------------------------------------------------------- CHECKLISTY */
+const CHECKLISTS = {
+  pre: { title:'🧳 Pre-trip', items:['Dokumenty + prawo jazdy', 'Ubezpieczenie kampera', 'Foteliki dzieci 4l i 8mc', 'Zapas wody min. 20 l', 'Apteczka + leki', 'Ładowarki + powerbank', 'Gotówka USD', 'WEA włączone w telefonach'] },
+  morning: { title:'🌅 Poranna', items:['Sprawdź werdykt apki', 'Tankowanie / poziom paliwa', 'Woda i lód do lodówki', 'Pełne butelki dla dzieci', 'Naładowane telefony', 'Sprawdź ciśnienie opon', 'Plan postojów co 2h'] },
+  evening: { title:'🌇 Wieczorna', items:['Podłącz hookup / prąd', 'Naładuj wszystko na noc', 'Przygotuj jutrzejszą trasę', 'Woda na rano', 'Zamknij i zabezpiecz kampera', 'Sprawdź prognozę na jutro'] },
+};
+function renderChecklists() {
+  const el = document.getElementById('checklistBody');
+  el.innerHTML = Object.entries(CHECKLISTS).map(([key, cl]) => `
+    <div>
+      <div class="font-semibold text-gray-200 mb-1">${cl.title}</div>
+      ${cl.items.map((it, i) => {
+        const id = `cl_${key}_${i}`;
+        const checked = localStorage.getItem(id) === '1';
+        return `<label class="tap flex items-center gap-2 ${checked?'text-gray-500 line-through':''}">
+          <input type="checkbox" data-id="${id}" ${checked?'checked':''} class="w-5 h-5 accent-amber-500"> <span>${it}</span></label>`;
+      }).join('')}
+    </div>`).join('');
+  el.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      localStorage.setItem(cb.dataset.id, cb.checked ? '1' : '0');
+      cb.closest('label').classList.toggle('line-through', cb.checked);
+      cb.closest('label').classList.toggle('text-gray-500', cb.checked);
+    });
+  });
+}
+
+function renderSources() {
+  const el = document.getElementById('sourcesBody');
+  const fmt = state.dataTime ? fmtTime(state.dataTime) : '—';
+  const lines = [];
+  lines.push(`<div><b>Ostatnie udane dane:</b> ${fmt}</div>`);
+  lines.push(`<div><b>Pozycja GPS:</b> ${state.position ? `${state.position.lat.toFixed(4)}, ${state.position.lng.toFixed(4)} (±${Math.round(state.position.accuracy)}m)` : 'brak'}</div>`);
+  lines.push(`<div><b>Pogoda (NWS):</b> ${Object.keys(state.weather).length} punktów</div>`);
+  lines.push(`<div><b>Alerty (NWS):</b> ${Object.keys(state.alertsByPt).length} punktów</div>`);
+  lines.push(`<div><b>Pożary (WFIGS):</b> ${state.fires ? state.fires.length : 'brak danych'}</div>`);
+  lines.push(`<div><b>Droga:</b> ${state.road.status} — ${state.road.note||''}</div>`);
+  if (state.errors.length) lines.push(`<div class="mt-2 text-amber-400"><b>Błędy/odmowy (${state.errors.length}):</b><br>${state.errors.slice(-8).join('<br>')}</div>`);
+  lines.push(`<div class="mt-2 text-gray-500">Źródła: api.weather.gov • WFIGS ArcGIS • feedy 511. Wszystkie darmowe, bez kluczy.</div>`);
+  el.innerHTML = lines.join('');
+}
+
+function renderAll() {
+  renderHeader();
+  renderVerdict();
+  renderTiles();
+  renderPlan();
+  renderCompare();
+  renderSources();
+}
+
+/* ================================================================== ŁADOWANIE DANYCH */
+function bboxAround(points, padDeg) {
+  let xmin=180, ymin=90, xmax=-180, ymax=-90;
+  points.forEach(p => { xmin=Math.min(xmin,p.lng); xmax=Math.max(xmax,p.lng); ymin=Math.min(ymin,p.lat); ymax=Math.max(ymax,p.lat); });
+  return { xmin: xmin-padDeg, xmax: xmax+padDeg, ymin: ymin-padDeg, ymax: ymax+padDeg };
+}
+
+async function loadData() {
+  state.errors = [];
+  const d = clampDay();
+  if (d < 1 || d > TRIP_DAYS) { renderAll(); return; }
+
+  // Punkty do odpytania: from/to obu tras + GPS (dedup).
+  const pts = [];
+  const add = p => { if (!pts.some(q => ptKey(q) === ptKey(p))) pts.push(p); };
+  ['LOWER','UPPER'].forEach(rk => { const s = getDay(rk, d); if (s) { add(s.from); add(s.to); } });
+  if (state.position) add({ name:'Twoja pozycja', lat: state.position.lat, lng: state.position.lng });
+
+  setRefreshing(true);
+
+  // Pogoda + alerty równolegle.
+  const wxResults = await Promise.all(pts.map(p => getForecastForPoint(p).then(r => [ptKey(p), r])));
+  wxResults.forEach(([k, r]) => { if (r) state.weather[k] = r; });
+
+  const alResults = await Promise.all(pts.map(p => getAlertsForPoint(p).then(r => [ptKey(p), r])));
+  alResults.forEach(([k, r]) => { if (r != null) state.alertsByPt[k] = r; });
+
+  // Pożary (bbox ~250km ≈ 2.5°) wokół wszystkich punktów.
+  const fires = await getFires(bboxAround(pts, 2.5));
+  if (fires != null) state.fires = fires;
+
+  // Droga.
+  state.road = await getRoadStatus();
+
+  state.dataTime = new Date();
+  state.online = navigator.onLine;
+  setRefreshing(false);
+  renderAll();
+}
+
+function setRefreshing(on) {
+  const icon = document.getElementById('refreshIcon');
+  if (on) icon.classList.add('spin'); else icon.classList.remove('spin');
+}
+
+/* ===================================================================== INIT */
+function setRoute(r) {
+  state.route = r;
+  localStorage.setItem('rt_route', r);
+  renderAll();
+  loadData();
+}
+document.getElementById('btnLower').addEventListener('click', () => setRoute('LOWER'));
+document.getElementById('btnUpper').addEventListener('click', () => setRoute('UPPER'));
+document.getElementById('btnRefresh').addEventListener('click', () => { requestPosition(false); loadData(); });
+document.getElementById('btnWhere').addEventListener('click', () => requestPosition(true));
+
+window.addEventListener('online', () => { state.online = true; renderHeader(); loadData(); });
+window.addEventListener('offline', () => { state.online = false; renderHeader(); renderVerdict(); });
+
+// Render od razu (z cache/mocków), potem dociągnij dane.
+renderChecklists();
+renderAll();
+requestPosition(false);
+loadData();
+
+// Odświeżanie co 5 min.
+setInterval(() => { state.day = getCurrentTripDay(); requestPosition(false); loadData(); }, 5 * 60 * 1000);
+
+// Service worker.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+
+// Eksponuj dla testów/konsoli.
+window.__rt = { state, computeVerdict, assessRoute, haversine, getCurrentTripDay, ROUTES, routesDiffer };
+</script>
+</body>
+</html>
