@@ -1,46 +1,62 @@
-# 🛣️ Roadtrip Dashboard — Dallas → LA
+# 🛣️ Roadtrip Dashboard — „Czy bezpiecznie tam jechać?”
 
-Mobilny **PWA** i jedyne narzędzie decyzyjne na 21-dniowy roadtrip kamperem
-Dallas → LA (28.05–17.06.2026), 2 dorosłych + dzieci 4 lata i 8 miesięcy.
+Mobilny **PWA** i jedyne narzędzie decyzyjne na roadtrip kamperem do **LA**
+(2 dorosłych + dzieci 4 lata i 8 miesięcy). Język: polski.
 
-Apka nie jest panelem z linkami. To **jedno źródło prawdy**, które rano
-analizuje warunki za Ciebie i odpowiada na jedno pytanie:
+**Wpisujesz kolejny przystanek → apka bierze Twoją pozycję GPS i odpowiada:**
 
-> **„Czy dziś jechać, a jeśli tak — KTÓRĄ z dwóch tras?”**
+> **„Czy bezpiecznie tam dojechać, czy samo miejsce jest OK, i czy stamtąd
+> bezpiecznie dotrzemy dalej do LA?”**
 
-Otwierasz → widzisz werdykt (🟢 / 🟡 / 🔴) w 3 sekundy → wiesz co robić.
-Reszta (pogoda, alerty, pożary, droga, plan, checklisty, SOS) jest schowana
-niżej, opcjonalna.
+Sprawdza **wszystko, co się da** (darmowe API, bez kluczy): pogodę i jej
+**prognozę wzdłuż trasy w czasie przejazdu**, alerty NWS (flood/flash flood,
+upały, burze, dust storm, high wind, red flag, tornado…), pożary i trzęsienia
+ziemi — osobno dla **dojazdu**, **miejsca** i **odcinka dalej do LA**.
 
 ## Jak to działa
 
-- **Dwie trasy.** `DOLNA` (gorąca, krótsza) i `GÓRNA` (chłodniejsza przez
-  Albuquerque / Santa Fe / Flagstaff, dłuższa). Różnią się tylko w dniach
-  **5–9** i zbiegają się w **Phoenix 5 czerwca** (kotwica). Przełączasz
-  aktywną trasę w nagłówku — wybór zapisuje się w `localStorage`.
-- **Werdykt porównuje warianty** (gdy dziś się różnią) i rekomenduje, którą
-  jechać oraz o której godzinie wyjechać (dojazd przed 12:00, bufor 30 min,
-  nie wcześniej niż 5:30 ze względu na dzieci).
-- **Auto-dzień** liczony z dzisiejszej daty względem 28.05.2026 (z możliwością
-  ręcznego nadpisania przez `localStorage`).
-- **Geolokalizacja** (`navigator.geolocation`, wymaga HTTPS) wykrywa, przy
-  której trasie jesteś, i ostrzega, jeśli zboczyłeś od obu.
-- **Dane na żywo, darmowe, bez kluczy:**
-  - 🌡️ Pogoda — `api.weather.gov` (NWS)
-  - ⚠️ Alerty — `api.weather.gov/alerts/active` (Flash Flood, Extreme Heat,
-    Dust Storm, Red Flag, Severe Tstorm, High Wind…)
-  - 🔥 Pożary — WFIGS ArcGIS (incydenty aktywne), promień 250 km wokół trasy
-  - 🚧 Droga — best-effort feedy stanowe (TxDOT / NMRoads / AZ511 / Caltrans);
-    gdy feed nie odpowiada (zwykle CORS) → „sprawdź ręcznie” + linki, werdykt
-    NIE alarmuje na tej podstawie.
-- **Offline/niezawodność.** Service worker cache'uje powłokę, a ostatnie udane
-  odpowiedzi API trafiają do `localStorage`. Każdy fetch ma timeout 8 s i
-  `try/catch` — apka nigdy się nie wywala. Offline → werdykt z ostatnich danych
-  + baner „🔴 OFFLINE — potwierdź zanim ruszysz”.
+1. **Wpisujesz cel** (np. „Sedona, AZ”). Geokoder zamienia tekst na współrzędne
+   (Photon/OSM, fallback Nominatim). Wybierasz właściwy wynik z listy.
+2. **GPS** ustala Twoją pozycję startową (wymaga HTTPS; iPhone = dokładny,
+   MacBook = przybliżony przez WiFi).
+3. **OSRM** liczy realną trasę drogową i czas — osobno dla `start → cel` oraz
+   `cel → LA`. Jeśli OSRM jest niedostępny, apka **szacuje** czas z odległości.
+4. **Prognoza wzdłuż trasy:** apka próbkuje punkty na trasie i pobiera
+   **godzinową** prognozę NWS dopasowaną do **ETA** (zakłada, że wyjeżdżasz
+   niebawem), więc widzisz, jaka pogoda będzie *kiedy tam dojedziesz*.
+5. **Werdykt 🟢/🟡/🔴** = najgorsza z trzech nóg:
+   - 🚗 **Dojazd** — pogoda/alerty/pożary na trasie do celu,
+   - 📍 **Samo miejsce** — pogoda przyjazdu + noc, alerty, pożary, trzęsienia,
+   - 🌴 **Dalej do LA** — warunki na odcinku z celu do LA.
+6. **Czas i podział na dni:** jeśli dojazd przekracza komfortowy limit
+   (domyślnie **6 h**), apka proponuje **podział na 2 dni** ze wskazaniem
+   miejsca na nocleg po drodze (reverse-geocode punktu w połowie trasy).
 
-> ⚠️ Apka **pomaga decydować, ale NIE zastępuje rządowych alertów.** Włącz
-> **Wireless Emergency Alerts** w ustawieniach telefonu — tylko one obudzą Cię
-> w nocy.
+> ⚠️ Werdykt jest **konserwatywny**: lepiej fałszywy 🟡 niż przeoczony 🔴.
+> Apka **ostrzega i rekomenduje**, ale nie liczy auto-objazdów — od tego jest
+> nawigacja.
+
+> ⚠️ Apka **NIE zastępuje rządowych alertów.** Włącz **Wireless Emergency
+> Alerts** w ustawieniach telefonu — tylko one obudzą Cię w nocy.
+
+### Źródła danych (wszystkie darmowe, bez kluczy)
+
+| Sygnał            | Źródło                                                        |
+|-------------------|---------------------------------------------------------------|
+| Geokodowanie      | Photon (komoot/OSM), fallback Nominatim                       |
+| Trasa i czas      | OSRM (`router.project-osrm.org`), fallback: szacunek z dystansu |
+| Pogoda + prognoza | `api.weather.gov` (NWS, prognoza godzinowa)                   |
+| Alerty            | `api.weather.gov/alerts/active`                               |
+| Pożary            | WFIGS ArcGIS (incydenty aktywne)                              |
+| Trzęsienia        | USGS FDSN (M≥3, ostatnie 7 dni)                               |
+| Zamknięcia dróg   | brak darmowego API z CORS → linki do 511 (ręcznie)           |
+
+### Niezawodność / offline
+Każdy fetch ma **timeout 8 s + try/catch** — apka nigdy się nie wywala. Ostatnie
+udane odpowiedzi trafiają do `localStorage` (fallback). Service worker cache'uje
+powłokę. Gdy **wszystkie** źródła padną → 🟡 „Nie mogę zweryfikować — sprawdź
+ręcznie”, bez fałszywego 🔴. Offline → baner „🔴 OFFLINE — potwierdź zanim
+ruszysz”.
 
 ---
 
@@ -48,20 +64,18 @@ niżej, opcjonalna.
 
 | Plik            | Rola                                                        |
 |-----------------|-------------------------------------------------------------|
-| `index.html`    | Cała aplikacja: dane tras, logika werdyktu, UI (vanilla JS) |
+| `index.html`    | Cała aplikacja (vanilla JS): logika werdyktu, API, UI       |
 | `manifest.json` | Manifest PWA (ikona 🛣️ jako SVG base64, theme `#FFA500`)    |
-| `sw.js`         | Service worker (cache powłoki + zewnętrznych odpowiedzi)    |
+| `sw.js`         | Service worker (cache powłoki + odpowiedzi)                 |
 | `README.md`     | Ten plik                                                    |
 
-Stack: jeden `index.html` + Tailwind przez CDN + vanilla JS. **Bez build
-stepu.** Wszystko działa po wgraniu plików na serwer statyczny z HTTPS.
+Stack: jeden `index.html` + Tailwind przez CDN + vanilla JS. **Bez build stepu.**
 
 ---
 
 ## Hosting na własnym VPS (nginx + Let's Encrypt)
 
-PWA i geolokalizacja **wymagają HTTPS**. Wgraj cztery pliki do katalogu, np.
-`/var/www/roadtrip`, i skonfiguruj nginx.
+PWA i geolokalizacja **wymagają HTTPS**. Wgraj pliki do np. `/var/www/roadtrip`.
 
 ### 1. Blok serwera nginx
 
@@ -97,7 +111,6 @@ server {
         default_type application/manifest+json;
     }
 
-    # HTML bez agresywnego cache (żeby update dochodził)
     location = /index.html {
         add_header Cache-Control "no-cache";
     }
@@ -108,10 +121,9 @@ server {
 }
 ```
 
-> Uwaga: `manifest.json` serwujemy z typem `application/manifest+json`. Jeśli
-> wolisz rozszerzenie `.webmanifest`, zmień nazwę pliku i odnośnik
-> `<link rel="manifest" href="./app.webmanifest">` w `index.html` — blok
-> `types {}` powyżej obsługuje oba.
+> `manifest.json` serwujemy z typem `application/manifest+json`. Jeśli wolisz
+> rozszerzenie `.webmanifest`, zmień nazwę pliku i odnośnik
+> `<link rel="manifest" …>` w `index.html` — blok `types {}` obsługuje oba.
 
 Sprawdź i przeładuj:
 
@@ -122,114 +134,50 @@ sudo nginx -t && sudo systemctl reload nginx
 ### 2. HTTPS przez certbot (Let's Encrypt)
 
 ```bash
-# Debian/Ubuntu
 sudo apt update && sudo apt install -y certbot python3-certbot-nginx
-
-# Wystaw certyfikat i automatycznie skonfiguruj nginx na 443 + redirect z 80
 sudo certbot --nginx -d roadtrip.twojadomena.pl
-
-# Test automatycznego odnawiania
 sudo certbot renew --dry-run
 ```
 
-Certbot dopisze `listen 443 ssl;` i ścieżki do certyfikatu w bloku powyżej oraz
-ustawi przekierowanie HTTP→HTTPS. Po tym otwórz
-`https://roadtrip.twojadomena.pl` w Safari.
-
-### 3. Aktualizacja apki
-
-Wgraj zmienione pliki i (z racji `no-cache` na `sw.js`) przy następnym
-otwarciu service worker pobierze nową wersję i wyczyści stary cache.
+Certbot dopisze `listen 443 ssl;`, ścieżki do certyfikatu i przekierowanie
+HTTP→HTTPS. Po tym otwórz `https://roadtrip.twojadomena.pl` w Safari.
 
 ---
 
 ## Dodanie do ekranu głównego iPhone (Safari)
 
-1. Otwórz `https://roadtrip.twojadomena.pl` w **Safari** (nie w Chrome — na iOS
-   tylko Safari instaluje PWA).
-2. Dotknij ikony **Udostępnij** (kwadrat ze strzałką w górę).
-3. Wybierz **„Do ekranu głównego” / „Add to Home Screen”**.
-4. Potwierdź nazwę → na pulpicie pojawi się ikona 🛣️ „Roadtrip”.
-5. Uruchom z ikony — apka działa pełnoekranowo (standalone), bez paska Safari.
+1. Otwórz `https://roadtrip.twojadomena.pl` w **Safari** (na iOS tylko Safari
+   instaluje PWA i daje geolokalizację po HTTPS).
+2. Dotknij **Udostępnij** (kwadrat ze strzałką w górę).
+3. **„Do ekranu głównego” / „Add to Home Screen”** → potwierdź.
+4. Uruchom z ikony 🛣️ — apka działa pełnoekranowo (standalone).
+5. Przy pierwszym wyszukiwaniu zezwól na **dostęp do lokalizacji**.
 
-Przy pierwszym „Gdzie jestem” Safari zapyta o dostęp do lokalizacji —
-zezwól (na iPhone GPS jest dokładny; na MacBooku pozycja z WiFi jest
-przybliżona, ale wystarcza do planowania).
-
-> 💡 Niezależnie od apki: włącz **Ustawienia → Powiadomienia → Alerty
-> rządowe / Wireless Emergency Alerts**. To one obudzą Cię przy Flash Flood
-> czy ewakuacji.
+> 💡 Niezależnie od apki włącz **Ustawienia → Powiadomienia → Alerty rządowe /
+> Wireless Emergency Alerts**.
 
 ---
 
-## Edycja danych tras i przełączanie tras
-
-### Przełączanie aktywnej trasy
-W nagłówku apki przyciski **DOLNA / GÓRNA**. Wybór zapisuje się w
-`localStorage` (`rt_route`), domyślnie `LOWER`. Werdykt i kafle przeliczają się
-od razu.
-
-### Edycja planu (`TRIP_DATA`)
-Wszystkie dane są na górze `<script>` w `index.html`, w dwóch tablicach:
-
-- `TRIP_DATA_LOWER` — pełna trasa dolna, 21 dni.
-- `UPPER_OVERRIDE` — tylko dni, w których trasa górna różni się od dolnej
-  (5–9). `TRIP_DATA_UPPER` budowane jest automatycznie: bierze dolną i
-  podmienia te dni.
-
-Format jednego dnia:
+## Konfiguracja (na górze `<script>` w `index.html`)
 
 ```js
-{
-  day: 6,
-  date: "2026-06-02",
-  from: { name:"Alamogordo", lat:32.78, lng:-106.17 },
-  to:   { name:"Tucson",     lat:32.22, lng:-110.97 },
-  driveHours: 5,                 // godziny jazdy (dziesiętnie, np. 3.5)
-  activity: "White Sands o świcie…",
-  sleep: "Tucson",
-  knownRisks: ["heat","wind"],   // informacyjnie
-  anchor: true                   // opcjonalnie — kotwica (Phoenix 5.06)
-}
+const LA = { name:"Los Angeles (cel)", lat:34.0522, lng:-118.2437 }; // stały cel końcowy
+const MAX_DAILY_DRIVE_H = 6;   // powyżej → propozycja podziału na 2 dni (komfort z dziećmi)
+const MIN_DEPART_H = 5.5;      // nie sugeruj wyjazdu przed 5:30
+const AVG_SPEED_KMH = 88;      // prędkość do szacunku czasu, gdy OSRM padnie
 ```
 
-- **`driveKm` nie podajesz** — liczone w kodzie funkcją `haversine` z
-  współrzędnych `from`/`to`.
-- Współrzędne `lat`/`lng` w stopniach dziesiętnych (zachód = ujemne `lng`).
-- Aby dodać/zmienić dzień różniący trasy: edytuj wpis w `UPPER_OVERRIDE` pod
-  kluczem = numer dnia. Aby trasy były wspólne tego dnia — usuń wpis z
-  `UPPER_OVERRIDE`.
+- **Zmiana celu końcowego** (gdyby trasa kończyła się gdzie indziej): edytuj
+  `LA`.
+- **Progi werdyktu** (upał >37/>43°C, wiatr >40/>65 km/h, opady ≥60%, pożar
+  <50/<150 km, trzęsienie M≥4.5/M≥6): funkcja `assessLeg()`.
+- **Filtr alertów NWS:** stała `ALERT_FILTER`.
+- **Liczba próbek pogody wzdłuż trasy:** wywołania `sampleAlong(..., 4)` i
+  `sampleAlong(..., 3)` w `loadAnalysis()` (więcej = dokładniej, ale więcej
+  zapytań do NWS).
 
-### Ręczne nadpisanie bieżącego dnia (test/debug)
-W konsoli przeglądarki:
-
-```js
-localStorage.setItem('rt_dayOverride', '6');  // wymuś dzień 6
-location.reload();
-localStorage.removeItem('rt_dayOverride');     // powrót do auto-dnia
-```
-
-### Inne progi i ustawienia (w `index.html`)
-- Progi pogody/werdyktu: funkcje `assessRoute()` i `renderTiles()`
-  (`>37°C` upał, `>40 km/h` wiatr, pożar `<50` / `50–150` / `<250` km).
-- Optymalna godzina wyjazdu: `optimalDeparture()` (dojazd przed 12:00,
-  min. 5:30).
-- Filtr alertów NWS: stała `ALERT_FILTER`.
-
----
-
-## Scenariusze testowe (logika werdyktu)
-
-Logika `computeVerdict()` była weryfikowana m.in. dla:
-
-- czysto → 🟢 JEDŹ + optymalna godzina,
-- dół gorący (41°C) a góra OK (26°C) → 🟡 rekomenduje GÓRNĄ + koszt czasu,
-- NWS warning na aktywnej trasie, druga czysta → 🔴 ZMIEŃ NA TRASĘ X,
-- pożar < 50 km od jednej trasy → 🔴 + rekomendacja drugiej,
-- warning na obu trasach → 🔴 OBA WARIANTY — zostań,
-- wszystkie API padły → 🟡 „Nie mogę zweryfikować” (nie eskaluje do 🔴),
-- user poza planem → wskazanie najbliższego punktu.
-
-Werdykt jest **konserwatywny**: lepiej fałszywy 🟡 niż przeoczony 🔴. Apka
-ostrzega i rekomenduje trasę, ale **nie liczy auto-objazdów** — od tego jest
-nawigacja.
+### Testy logiki
+Logika `computeVerdict()` / `assessLeg()` była weryfikowana m.in. dla
+scenariuszy: czysto → 🟢; upał w celu → 🟡; Flash Flood na trasie → 🔴 (dojazd);
+pożar przy celu → 🔴 (miejsce); pożar na odcinku do LA → 🔴 (dalej); trzęsienie
+M6+ → 🔴; wszystkie API padły → 🟡 „nie mogę zweryfikować”; progi wiatru/temp.
