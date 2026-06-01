@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFA500">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Roadtrip">
+<title>Roadtrip — czy bezpiecznie jechać?</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9Ijk2IiBmaWxsPSIjRkZBNTAwIi8+PHRleHQgeD0iNTAlIiB5PSI1NSUiIGZvbnQtc2l6ZT0iMjgwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCI+8J+bo++4jzwvdGV4dD48L3N2Zz4=">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode:'class' };</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html { background:#0b0f19; }
+  body { -webkit-tap-highlight-color: transparent; padding-bottom: env(safe-area-inset-bottom); }
+  .tap { min-height:48px; }
+  details > summary { list-style:none; cursor:pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+  .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  input { font-size:16px; } /* nie zoomuj na iOS */
+  #map { height: 260px; background:#11161f; z-index:0; }
+  .leaflet-container { background:#11161f; font:inherit; }
+  .emoji-pin { font-size:22px; line-height:22px; text-align:center; text-shadow:0 0 3px #000,0 0 3px #000; }
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:#1f2937; color:#f3f4f6; }
+  .leaflet-popup-content { margin:8px 10px; font-size:12px; }
+</style>
+</head>
+<body class="dark bg-gray-950 text-gray-100 antialiased">
+<div class="max-w-md mx-auto min-h-screen flex flex-col">
+
+  <!-- HEADER -->
+  <header class="px-4 pt-4 pb-3 sticky top-0 z-20 bg-gray-950/95 backdrop-blur border-b border-gray-800">
+    <div class="flex items-center justify-between">
+      <div class="text-sm">
+        <div class="font-bold text-amber-400">🛣️ Czy jechać?</div>
+        <div id="originLabel" class="text-xs text-gray-400">📍 Ustalam pozycję…</div>
+      </div>
+      <button id="btnLocate" class="tap text-xs text-amber-400 active:text-amber-300 flex items-center gap-1"><span id="locIcon">📍</span> Moja pozycja</button>
+    </div>
+    <div class="mt-3 flex gap-2">
+      <input id="searchInput" type="text" inputmode="search" placeholder="Dokąd jedziesz? np. Sedona, AZ"
+        class="tap flex-1 bg-gray-800 rounded-lg px-3 text-base placeholder-gray-500 outline-none focus:ring-2 ring-amber-500">
+      <button id="btnSearch" class="tap px-4 bg-amber-500 text-gray-950 font-bold rounded-lg active:bg-amber-400">Sprawdź</button>
+    </div>
+    <div id="recent" class="mt-2 flex gap-2 flex-wrap"></div>
+    <div id="results" class="mt-2 space-y-1"></div>
+  </header>
+
+  <!-- WERDYKT -->
+  <section id="verdict" class="px-5 py-6 min-h-[40vh] flex flex-col justify-center transition-colors duration-300 bg-gray-900">
+    <div id="vBadge" class="text-6xl mb-2">🧭</div>
+    <div id="vTitle" class="text-3xl font-black leading-none mb-3">Wpisz cel podróży</div>
+    <div id="vBody" class="text-base leading-snug opacity-95">Apka weźmie Twoją pozycję, policzy dojazd i sprawdzi pogodę, alerty, pożary i trzęsienia — na trasie, w miejscu i dalej do LA.</div>
+    <div id="vMeta" class="mt-4 text-xs opacity-80"></div>
+  </section>
+
+  <!-- MAPA -->
+  <section id="mapWrap" class="px-3 pt-2 hidden">
+    <div class="rounded-xl overflow-hidden border border-gray-800 relative">
+      <div id="map"></div>
+      <div id="mapLegend" class="absolute bottom-1 left-1 z-[400] text-[10px] bg-gray-950/80 rounded px-2 py-1 leading-tight pointer-events-none"></div>
+    </div>
+  </section>
+
+  <!-- 3 NOGI -->
+  <section id="legs" class="px-3 pt-2 space-y-2 hidden">
+    <div id="leg1" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 p-3"></div>
+    <div id="leg2" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 p-3"></div>
+    <div id="leg3" class="bg-gray-900 rounded-xl border-l-4 border-gray-600 p-3"></div>
+  </section>
+
+  <!-- CZAS / PODZIAŁ -->
+  <section id="driveCard" class="px-3 pt-2 hidden">
+    <div class="bg-gray-900 rounded-xl p-3 text-sm">
+      <div class="font-semibold text-gray-200 mb-1">🕒 Czas przejazdu</div>
+      <div id="driveBody" class="text-gray-300"></div>
+    </div>
+  </section>
+
+  <!-- KAFLE -->
+  <section id="tiles" class="grid grid-cols-2 gap-2 px-3 pt-2 hidden">
+    <details id="tileWeather" class="bg-gray-900 rounded-xl border-l-4 border-gray-600">
+      <summary class="tap px-3 py-3 flex justify-between"><span class="font-semibold text-sm">🌡️ Pogoda</span><span id="wStatus" class="text-xs text-gray-400">—</span></summary>
+      <div id="wBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+    <details id="tileAlerts" class="bg-gray-900 rounded-xl border-l-4 border-gray-600">
+      <summary class="tap px-3 py-3 flex justify-between"><span class="font-semibold text-sm">⚠️ Alerty</span><span id="aStatus" class="text-xs text-gray-400">—</span></summary>
+      <div id="aBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+    <details id="tileFire" class="bg-gray-900 rounded-xl border-l-4 border-gray-600">
+      <summary class="tap px-3 py-3 flex justify-between"><span class="font-semibold text-sm">🔥 Pożary</span><span id="fStatus" class="text-xs text-gray-400">—</span></summary>
+      <div id="fBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+    <details id="tileQuake" class="bg-gray-900 rounded-xl border-l-4 border-gray-600">
+      <summary class="tap px-3 py-3 flex justify-between"><span class="font-semibold text-sm">🌐 Trzęsienia</span><span id="qStatus" class="text-xs text-gray-400">—</span></summary>
+      <div id="qBody" class="px-3 pb-3 text-xs text-gray-300 space-y-1"></div>
+    </details>
+  </section>
+
+  <!-- SEKCJE -->
+  <section id="sections" class="px-3 pt-2 pb-2 space-y-2 hidden">
+    <details id="fuelSec" class="bg-gray-900 rounded-xl border-l-4 border-gray-600">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between"><span>⛽ Paliwo i stacje</span><span id="fuelStatus" class="text-xs text-gray-400">—</span></summary>
+      <div class="px-4 pb-4 text-xs text-gray-300 space-y-1">
+        <div class="flex items-center gap-2">
+          <label class="text-gray-400">Zasięg na paliwie (mile):</label>
+          <input id="fuelInput" type="number" inputmode="numeric" min="0" class="tap w-24 bg-gray-800 rounded px-2 outline-none focus:ring-2 ring-amber-500" placeholder="np. 300">
+          <button id="fuelSave" class="tap bg-amber-500 text-gray-950 font-bold rounded px-3">Zapisz</button>
+        </div>
+        <div id="fuelBody" class="mt-1 space-y-1"></div>
+      </div>
+    </details>
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between">📈 Prognoza wzdłuż trasy <span class="text-gray-500">▾</span></summary>
+      <div id="timelineBody" class="px-4 pb-4 text-xs text-gray-300 space-y-1"></div>
+    </details>
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between">🚧 Drogi (sprawdź ręcznie) <span class="text-gray-500">▾</span></summary>
+      <div id="roadBody" class="px-4 pb-4 text-xs text-gray-300 space-y-1"></div>
+    </details>
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between">🆘 Kontakty SOS <span class="text-gray-500">▾</span></summary>
+      <div class="px-4 pb-4 text-sm space-y-2">
+        <a href="tel:911" class="tap flex items-center justify-between bg-red-900/40 rounded-lg px-3 active:bg-red-900/60"><span>🚨 Nagły wypadek</span><b>911</b></a>
+        <a href="tel:511" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>🛣️ Info drogowe</span><b>511</b></a>
+        <a href="tel:18002224357" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>🔧 AAA</span><b>1-800-222-4357</b></a>
+        <a href="tel:18002221222" class="tap flex items-center justify-between bg-gray-800 rounded-lg px-3 active:bg-gray-700"><span>☠️ Poison Control</span><b>1-800-222-1222</b></a>
+      </div>
+    </details>
+    <details class="bg-gray-900 rounded-xl">
+      <summary class="tap px-4 py-3 font-semibold text-sm flex justify-between">🛰️ Dane źródłowe <span class="text-gray-500">▾</span></summary>
+      <div id="sourcesBody" class="px-4 pb-4 text-xs text-gray-400 space-y-1 break-words"></div>
+    </details>
+  </section>
+
+  <footer class="mt-auto px-4 py-3 text-[11px] leading-tight text-amber-200/90 bg-amber-950/40 border-t border-amber-900/50">
+    ⚠️ Pomagam decydować, ale <b>NIE zastępuję rządowych alertów</b>. Włącz <b>Wireless Emergency Alerts</b> w ustawieniach telefonu — tylko one obudzą Cię w nocy.
+  </footer>
+</div>
+
+<script>
+/* ============================================================================
+   ROADTRIP — „Czy bezpiecznie jechać do X i dalej do LA?”
+   Wpisujesz miejsce → GPS jako start → OSRM liczy dojazd i odcinek do LA →
+   prognoza wzdłuż trasy (NWS godzinowa wg ETA) + alerty + pożary + trzęsienia.
+   Wszystkie API darmowe, bez kluczy. Każdy fetch: timeout 8s + try/catch.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- KONFIG */
+const LA = { name:"Los Angeles (cel)", lat:34.0522, lng:-118.2437 };
+// Jazda pod drzemki Eleny: okno 1 ≈ 1,5h, okno 2 ≈ 2,5h → ~4h komfortowo/dzień.
+const NAP1_H = 1.5;              // pierwsza drzemka (krótsza)
+const NAP2_H = 2.5;              // druga drzemka (dłuższa)
+const COMFY_DAY_H = NAP1_H + NAP2_H; // ~4h dziennie w dwóch oknach
+const NIGHT_MAX_EXTRA_H = 2.5;  // ile można awaryjnie dobić nocą po dniu jazdy
+const MAX_DAILY_DRIVE_H = COMFY_DAY_H; // (zgodność wstecz)
+const MIN_DEPART_H = 5.5;        // nie wcześniej niż 5:30
+const AVG_SPEED_KMH = 88;        // fallback gdy OSRM padnie
+
+// Plan jazdy w oknach drzemek: dzieli łączny czas na dni po ~4h (1,5h + 2,5h).
+function napPlan(driveH){
+  const days=[]; let remaining=driveH, n=0;
+  while(remaining>0.05 && n<8){
+    n++; let driven=0; const windows=[];
+    [NAP1_H,NAP2_H].forEach((w,i)=>{ if(remaining<=0.05) return;
+      const use=Math.min(w,remaining); windows.push({nap:i+1,planned:w,use}); remaining-=use; driven+=use; });
+    days.push({day:n,driven,windows,leftover:remaining});
+  }
+  return {days, totalDays:days.length, comfyDay:COMFY_DAY_H};
+}
+
+/* ---------------------------------------------------------------- NARZĘDZIA */
+function haversine(lat1,lng1,lat2,lng2){
+  const R=6371,r=Math.PI/180;
+  const dLat=(lat2-lat1)*r,dLng=(lng2-lng1)*r;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*r)*Math.cos(lat2*r)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function distToPath(lat,lng,coords){ // coords: [[lng,lat],...]; min odległość
+  let min=Infinity;
+  for(let i=0;i<coords.length;i++){ const d=haversine(lat,lng,coords[i][1],coords[i][0]); if(d<min)min=d; }
+  return min;
+}
+const pad2=n=>String(n).padStart(2,'0');
+function fmtHourDate(d){ try{return d.toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});}catch(e){return '--:--';} }
+function fmtH(hours){ const h=Math.floor(hours),m=Math.round((hours-h)*60); return m? `${h}h ${m}min` : `${h}h`; }
+const F2C = f => (f-32)*5/9;
+const MI2KM = mi => mi*1.60934;
+
+/* ---------------------------------------------------------------- STAN */
+const state = {
+  origin:null,            // {lat,lng,accuracy,name}
+  destination:null,       // {name,lat,lng}
+  analysis:null,          // wynik loadAnalysis -> obiekt do computeVerdict
+  loading:false,
+  online: navigator.onLine,
+  errors:[],
+};
+let _map=null,_layer=null; // Leaflet (lazy init)
+function cacheSet(k,d){ try{localStorage.setItem('rt2_'+k,JSON.stringify({t:Date.now(),d}));}catch(e){} }
+function cacheGet(k){ try{const r=localStorage.getItem('rt2_'+k);return r?JSON.parse(r):null;}catch(e){return null;} }
+
+/* ---------------------------------------------------------------- FETCH (timeout) */
+async function fetchJSON(url,opts,timeoutMs){
+  const c=new AbortController(); const t=setTimeout(()=>c.abort(),timeoutMs||8000);
+  try{
+    const r=await fetch(url,Object.assign({signal:c.signal,headers:{'Accept':'application/json'}},opts||{}));
+    clearTimeout(t); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json();
+  }catch(e){ clearTimeout(t); throw e; }
+}
+
+/* ---------------------------------------------------------------- GEOKODOWANIE */
+async function geocode(q){
+  // Photon (komoot) – CORS-friendly, bez klucza. Fallback: Nominatim.
+  try{
+    const j=await fetchJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lang=en`);
+    const out=(j.features||[]).map(f=>({
+      name:[f.properties.name,f.properties.city,f.properties.state,f.properties.country].filter(Boolean).join(', '),
+      lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0]
+    })).filter(p=>p.name);
+    if(out.length) return out;
+    throw new Error('brak wyników Photon');
+  }catch(e){
+    state.errors.push('Geokoder Photon: '+e.message);
+    try{
+      const j=await fetchJSON(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}`);
+      return (j||[]).map(r=>({name:r.display_name, lat:+r.lat, lng:+r.lon}));
+    }catch(e2){ state.errors.push('Geokoder Nominatim: '+e2.message); return []; }
+  }
+}
+async function reverseName(lat,lng){
+  try{
+    const j=await fetchJSON(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`);
+    const p=j.features&&j.features[0]&&j.features[0].properties;
+    if(p) return [p.name,p.city,p.state].filter(Boolean).join(', ');
+  }catch(e){ state.errors.push('Reverse geocode: '+e.message); }
+  return `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
+/* ---------------------------------------------------------------- ROUTING OSRM */
+async function routeOSRM(a,b){
+  try{
+    const url=`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson`;
+    const j=await fetchJSON(url);
+    const r=j.routes&&j.routes[0];
+    if(!r) throw new Error('brak trasy');
+    return { km:r.distance/1000, hours:r.duration/3600, coords:r.geometry.coordinates, estimated:false };
+  }catch(e){
+    state.errors.push('OSRM: '+e.message+' — szacuję z odległości');
+    const km=haversine(a.lat,a.lng,b.lat,b.lng)*1.25; // współ. krętości dróg
+    return { km, hours:km/AVG_SPEED_KMH, coords:[[a.lng,a.lat],[b.lng,b.lat]], estimated:true };
+  }
+}
+// Punkty co ~równą odległość wzdłuż trasy (do próbkowania pogody/alertów).
+function sampleAlong(coords,n){
+  if(coords.length<=n) return coords.map(c=>({lat:c[1],lng:c[0]}));
+  let total=0; const cum=[0];
+  for(let i=1;i<coords.length;i++){ total+=haversine(coords[i-1][1],coords[i-1][0],coords[i][1],coords[i][0]); cum.push(total); }
+  const out=[];
+  for(let s=0;s<n;s++){
+    const target=total*s/(n-1); let i=1; while(i<cum.length&&cum[i]<target)i++;
+    const c=coords[Math.min(i,coords.length-1)]; out.push({lat:c[1],lng:c[0],frac:s/(n-1)});
+  }
+  return out;
+}
+// Punkt na trasie po przejechaniu ~connectH godzin (do noclegu przy podziale).
+function pointAtHours(coords,totalHours,targetHours){
+  let total=0; const cum=[0];
+  for(let i=1;i<coords.length;i++){ total+=haversine(coords[i-1][1],coords[i-1][0],coords[i][1],coords[i][0]); cum.push(total); }
+  const frac=Math.max(0,Math.min(1,targetHours/totalHours));
+  const target=total*frac; let i=1; while(i<cum.length&&cum[i]<target)i++;
+  const c=coords[Math.min(i,coords.length-1)]; return {lat:c[1],lng:c[0]};
+}
+
+/* ---------------------------------------------------------------- NWS POGODA */
+async function nwsHourly(lat,lng){
+  const key=lat.toFixed(2)+','+lng.toFixed(2);
+  try{
+    const pts=await fetchJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lng.toFixed(4)}`,{headers:{'Accept':'application/geo+json'}});
+    const url=pts.properties&&pts.properties.forecastHourly;
+    if(!url) throw new Error('brak forecastHourly');
+    const fc=await fetchJSON(url,{headers:{'Accept':'application/geo+json'}});
+    const periods=(fc.properties&&fc.properties.periods)||[];
+    cacheSet('hr_'+key,periods.slice(0,36));
+    return periods;
+  }catch(e){
+    state.errors.push(`Pogoda ${key}: ${e.message}`);
+    const c=cacheGet('hr_'+key); return c?c.d:null;
+  }
+}
+function periodAt(periods,when){
+  if(!periods||!periods.length) return null;
+  const t=when.getTime();
+  let best=periods[0],bestd=Infinity;
+  periods.forEach(p=>{ const d=Math.abs(new Date(p.startTime).getTime()-t); if(d<bestd){bestd=d;best=p;} });
+  const tempC=best.temperatureUnit==='F'?F2C(best.temperature):best.temperature;
+  const wm=String(best.windSpeed||'').match(/(\d+)/); const windKmh=wm?MI2KM(+wm[1]):0;
+  const wg=String(best.windGust||'').match(/(\d+)/); const gustKmh=wg?MI2KM(+wg[1]):0;
+  const precip=(best.probabilityOfPrecipitation&&best.probabilityOfPrecipitation.value)||0;
+  const sf=(best.shortForecast||'');
+  return { tempC, windKmh, gustKmh, precip, short:sf, hasStorm:/thunder|storm|tstorm/i.test(sf), when:new Date(best.startTime) };
+}
+
+/* ---------------------------------------------------------------- NWS ALERTY */
+const ALERT_FILTER=[/flash flood/i,/flood/i,/extreme heat|excessive heat|heat warning/i,/dust storm/i,/red flag/i,/severe thunderstorm/i,/high wind/i,/tornado/i,/winter storm/i];
+function alertSeverity(ev){ return /advisory|watch/i.test(ev)?'advisory':'warning'; }
+async function nwsAlerts(lat,lng){
+  const key=lat.toFixed(2)+','+lng.toFixed(2);
+  try{
+    const j=await fetchJSON(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lng.toFixed(4)}`,{headers:{'Accept':'application/geo+json'}});
+    const out=[]; (j.features||[]).forEach(f=>{ const ev=(f.properties&&f.properties.event)||''; if(ALERT_FILTER.some(rx=>rx.test(ev))) out.push({event:ev,severity:alertSeverity(ev),id:f.id,geometry:f.geometry||null}); });
+    cacheSet('al_'+key,out); return out;
+  }catch(e){ state.errors.push(`Alerty ${key}: ${e.message}`); const c=cacheGet('al_'+key); return c?c.d:null; }
+}
+
+/* ---------------------------------------------------------------- POŻARY WFIGS */
+async function fires(bbox){
+  const url=`https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Incident_Locations_Current/FeatureServer/0/query`
+    +`?where=1%3D1&outFields=IncidentName,IncidentSize,PercentContained,FireDiscoveryDateTime&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
+    +`&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=4326&f=geojson`;
+  try{
+    const j=await fetchJSON(url);
+    const out=(j.features||[]).map(f=>{ const p=f.properties||{};
+      return {name:p.IncidentName||p.incident_name||'Pożar', size:p.IncidentSize!=null?+p.IncidentSize:null,
+        contained:p.PercentContained!=null?+p.PercentContained:null, discovered:p.FireDiscoveryDateTime||null,
+        lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0]}; }).filter(f=>f.lat!=null);
+    cacheSet('fires',out); return out;
+  }catch(e){ state.errors.push('Pożary WFIGS: '+e.message); const c=cacheGet('fires'); return c?c.d:null; }
+}
+// Obrysy (perymetry) pożarów — poligony do narysowania na mapie.
+async function firePerims(bbox){
+  const url=`https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query`
+    +`?where=1%3D1&outFields=poly_IncidentName,IncidentName&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
+    +`&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=4326&f=geojson`;
+  try{ const j=await fetchJSON(url); cacheSet('perims',j); return j; }
+  catch(e){ state.errors.push('Pożary (obrysy): '+e.message); const c=cacheGet('perims'); return c?c.d:null; }
+}
+
+/* ---------------------------------------------------------------- KEMPINGI (OSM) */
+// Jedziemy kamperem — szukamy camp_site / caravan_site (NIE moteli).
+async function findCampground(lat,lng){
+  const q=`[out:json][timeout:8];(nwr["tourism"="caravan_site"](around:35000,${lat},${lng});nwr["tourism"="camp_site"](around:35000,${lat},${lng}););out center tags 40;`;
+  try{
+    const j=await fetchJSON('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q));
+    const els=(j.elements||[]).map(e=>{ const la=e.lat!=null?e.lat:(e.center&&e.center.lat), ln=e.lon!=null?e.lon:(e.center&&e.center.lon);
+      if(la==null) return null; const t=e.tags||{};
+      return { name:t.name||(t.tourism==='caravan_site'?'Park RV (bez nazwy)':'Kemping (bez nazwy)'),
+        rv:t.tourism==='caravan_site', named:!!t.name, lat:la, lng:ln, dist:haversine(lat,lng,la,ln) }; })
+      .filter(Boolean).filter(e=>e.dist<40);
+    // preferuj nazwane i RV-friendly, potem najbliższe
+    els.sort((a,b)=> (b.named-a.named) || (b.rv-a.rv) || (a.dist-b.dist));
+    return els.length? {best:els[0], more:els.filter(e=>e.named).slice(0,4)} : null;
+  }catch(e){ state.errors.push('Kempingi OSM: '+e.message); return null; }
+}
+
+/* ---------------------------------------------------------------- ATRAKCJE DLA RODZINY (OSM) */
+// Coś fajnego dla dzieci 4l i 8mc w pobliżu postoju/noclegu/celu.
+const FAM_TAGS=[
+  ['leisure','playground','🛝','plac zabaw',2],
+  ['leisure','water_park','🛟','park wodny',5],
+  ['tourism','zoo','🦁','zoo',6],
+  ['tourism','aquarium','🐠','akwarium',5],
+  ['tourism','theme_park','🎡','park rozrywki',6],
+  ['tourism','attraction','📸','atrakcja',3],
+  ['leisure','park','🌳','park',1],
+];
+async function findFamilyPOI(lat,lng,radius){
+  radius=radius||20000;
+  const parts=FAM_TAGS.map(([k,v])=>`nwr["${k}"="${v}"]["name"](around:${radius},${lat},${lng});`).join('');
+  const q=`[out:json][timeout:10];(${parts});out center tags 80;`;
+  try{
+    const j=await fetchJSON('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q),null,12000);
+    const items=(j.elements||[]).map(e=>{ const la=e.lat!=null?e.lat:(e.center&&e.center.lat), ln=e.lon!=null?e.lon:(e.center&&e.center.lon);
+      const t=e.tags||{}; const tag=FAM_TAGS.find(ft=>t[ft[0]]===ft[1]); if(la==null||!t.name||!tag) return null;
+      return {name:t.name, emoji:tag[2], kind:tag[3], prio:tag[4], lat:la, lng:ln, dist:haversine(lat,lng,la,ln)}; })
+      .filter(Boolean);
+    const seen=new Set(); const uniq=items.filter(e=>{ if(seen.has(e.name))return false; seen.add(e.name); return true; });
+    uniq.sort((a,b)=>(b.prio-a.prio)||(a.dist-b.dist));
+    return uniq.slice(0,5);
+  }catch(e){ state.errors.push('Atrakcje OSM: '+e.message); return null; }
+}
+
+/* ---------------------------------------------------------------- PALIWO / STACJE (OSM) */
+function bboxOfCoords(coords,pad){ let xmin=180,xmax=-180,ymin=90,ymax=-90;
+  coords.forEach(c=>{xmin=Math.min(xmin,c[0]);xmax=Math.max(xmax,c[0]);ymin=Math.min(ymin,c[1]);ymax=Math.max(ymax,c[1]);});
+  return {xmin:xmin-pad,xmax:xmax+pad,ymin:ymin-pad,ymax:ymax+pad}; }
+// Stacje paliw przy trasie dojazdu + wykrycie długich odcinków bez tankowania.
+async function fuelAlongRoute(coords){
+  const bb=bboxOfCoords(coords,0.15);
+  const q=`[out:json][timeout:15];node["amenity"="fuel"](${bb.ymin},${bb.xmin},${bb.ymax},${bb.xmax});out 800;`;
+  try{
+    const j=await fetchJSON('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q),null,15000);
+    return computeFuelGaps(coords, (j.elements||[]).map(n=>({lat:n.lat,lng:n.lon,name:(n.tags&&(n.tags.name||n.tags.brand))||'stacja'})));
+  }catch(e){ state.errors.push('Stacje paliw OSM: '+e.message); return null; }
+}
+// Czysta funkcja (testowalna): rzutuje stacje na trasę i liczy luki.
+function computeFuelGaps(coords, stations){
+  const cum=[0]; let total=0;
+  for(let i=1;i<coords.length;i++){ total+=haversine(coords[i-1][1],coords[i-1][0],coords[i][1],coords[i][0]); cum.push(total); }
+  const onRoute=[];
+  stations.forEach(s=>{ let best=Infinity,at=0; for(let i=0;i<coords.length;i++){ const dd=haversine(s.lat,s.lng,coords[i][1],coords[i][0]); if(dd<best){best=dd;at=cum[i];} }
+    if(best<8) onRoute.push({name:s.name,at,off:best,lat:s.lat,lng:s.lng}); });
+  onRoute.sort((a,b)=>a.at-b.at);
+  let maxGap=0,gapFrom='start',gapAt=0,prev=0,prevName='start';
+  onRoute.forEach(s=>{ const g=s.at-prev; if(g>maxGap){maxGap=g;gapFrom=prevName;gapAt=prev;} prev=s.at; prevName=s.name; });
+  const endGap=total-prev; if(endGap>maxGap){maxGap=endGap;gapFrom=prevName;gapAt=prev;}
+  return {stations:onRoute, total, maxGap, gapFrom, gapAt, count:onRoute.length};
+}
+// Łączy luki + zasięg paliwa (mile) w gotowe wskazówki (czysta, testowalna).
+function buildFuelInfo(fuel, rangeMi, driveKm){
+  const km2mi=km=>km/1.60934;
+  const info={ count:fuel.count, maxGapKm:fuel.maxGap, maxGapMi:km2mi(fuel.maxGap), gapFrom:fuel.gapFrom,
+               totalKm:fuel.total, rangeMi:rangeMi||null, stations:fuel.stations };
+  info.gapLevel = fuel.maxGap>200?'red':fuel.maxGap>100?'yellow':'green';
+  if(rangeMi){
+    const rangeKm=rangeMi*1.60934, refuelByKm=rangeKm*0.5; // tankuj zanim spadniesz < pół baku
+    info.refuelByMi=Math.round(km2mi(refuelByKm));
+    const before=fuel.stations.filter(s=>s.at<=refuelByKm);
+    info.refuelStation = before.length? before[before.length-1] : (fuel.stations[0]||null);
+    info.rangeExceeded = fuel.maxGap>rangeKm;   // luka dłuższa niż zasięg = realne ryzyko
+    info.cannotReach = driveKm>rangeKm;          // nie dojadą bez tankowania
+    if(info.rangeExceeded) info.gapLevel='red';
+  }
+  return info;
+}
+
+/* ---------------------------------------------------------------- TRZĘSIENIA USGS */
+async function quakes(bbox){
+  const start=new Date(Date.now()-7*86400000).toISOString();
+  const url=`https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=${start}&minmagnitude=3`
+    +`&minlatitude=${bbox.ymin}&maxlatitude=${bbox.ymax}&minlongitude=${bbox.xmin}&maxlongitude=${bbox.xmax}&orderby=magnitude`;
+  try{
+    const j=await fetchJSON(url);
+    const out=(j.features||[]).map(f=>({mag:f.properties.mag,place:f.properties.place,time:f.properties.time,lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
+    cacheSet('quakes',out); return out;
+  }catch(e){ state.errors.push('Trzęsienia USGS: '+e.message); const c=cacheGet('quakes'); return c?c.d:null; }
+}
+
+/* ---------------------------------------------------------------- DROGI (opcjonalny proxy) */
+// Zamknięcia/zdarzenia drogowe wymagają proxy (CORS). Generyczny ekstraktor
+// wyłuskuje punkty {lat,lng,desc} z dowolnego JSON/GeoJSON feedu stanu.
+function extractGeoItems(obj,out,depth){
+  if(depth>7||!obj||typeof obj!=='object'||out.length>800) return;
+  if(obj.type==='Feature'&&obj.geometry&&obj.geometry.type==='Point'&&Array.isArray(obj.geometry.coordinates)){
+    const c=obj.geometry.coordinates,p=obj.properties||{};
+    if(typeof c[1]==='number'&&typeof c[0]==='number') out.push({lat:c[1],lng:c[0],desc:p.description||p.name||p.location||p.detail||p.status||p.headline||'zdarzenie drogowe'});
+  }
+  if(Array.isArray(obj)){ for(const x of obj) extractGeoItems(x,out,depth+1); return; }
+  let lat=null,lng=null,desc=null;
+  for(const k in obj){ const v=obj[k],kl=k.toLowerCase();
+    if(typeof v==='number'){ if(/lat/.test(kl)&&Math.abs(v)<=90&&lat==null)lat=v; else if(/(lon|lng)/.test(kl)&&Math.abs(v)>1&&Math.abs(v)<=180&&lng==null)lng=v; }
+    else if(typeof v==='string'&&v.length>5&&!desc&&/desc|name|location|detail|closure|event|status|message|headline/.test(kl))desc=v;
+  }
+  if(lat!=null&&lng!=null) out.push({lat,lng,desc:desc||'zdarzenie drogowe'});
+  for(const k in obj){ if(obj[k]&&typeof obj[k]==='object') extractGeoItems(obj[k],out,depth+1); }
+}
+async function fetchRoadEvents(proxy,coords){
+  const feeds=['ca','az','nm','tx']; const all=[]; let any=false, lastErr=null;
+  for(const f of feeds){
+    try{
+      const sep=proxy.includes('?')?'&':'?';
+      const j=await fetchJSON(`${proxy}${sep}feed=${f}`,null,12000);
+      if(j&&j.error&&(!j.events||!j.events.length)) continue; // feed nieskonfigurowany
+      any=true;
+      const items=[]; extractGeoItems(j,items,0);
+      items.forEach(it=>{ const dist=distToPath(it.lat,it.lng,coords); if(dist<20) all.push(Object.assign({dist,feed:f},it)); });
+    }catch(e){ lastErr=e.message; state.errors.push(`Drogi (${f}): ${e.message}`); }
+  }
+  all.sort((a,b)=>a.dist-b.dist);
+  return any ? {items:all.slice(0,20)} : {error:lastErr||'brak skonfigurowanych feedów'};
+}
+
+/* ---------------------------------------------------------------- GPS */
+function locate(announce){
+  if(!('geolocation' in navigator)){ state.errors.push('Brak geolokalizacji'); renderOrigin(); return Promise.resolve(null); }
+  if(announce) document.getElementById('locIcon').textContent='⏳';
+  return new Promise(res=>{
+    navigator.geolocation.getCurrentPosition(
+      async p=>{
+        state.origin={lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,name:'…'};
+        document.getElementById('locIcon').textContent='📍';
+        renderOrigin();
+        state.origin.name=await reverseName(state.origin.lat,state.origin.lng);
+        renderOrigin(); res(state.origin);
+      },
+      e=>{ document.getElementById('locIcon').textContent='📍'; state.errors.push('GPS: '+e.message);
+           document.getElementById('originLabel').textContent='📍 GPS odmówiony — dotknij „Moja pozycja” lub sprawdzaj z ostatniej pozycji'; res(null); },
+      {enableHighAccuracy:true,timeout:8000,maximumAge:60000}
+    );
+  });
+}
+
+/* ====================================================== GŁÓWNA ANALIZA */
+function bboxOf(points,pad){
+  let xmin=180,xmax=-180,ymin=90,ymax=-90;
+  points.forEach(p=>{xmin=Math.min(xmin,p.lng);xmax=Math.max(xmax,p.lng);ymin=Math.min(ymin,p.lat);ymax=Math.max(ymax,p.lat);});
+  return {xmin:xmin-pad,xmax:xmax+pad,ymin:ymin-pad,ymax:ymax+pad};
+}
+
+async function loadAnalysis(){
+  if(!state.origin || !state.destination) return;
+  state.loading=true; state.errors=[]; setBusy(true); renderVerdict();
+
+  const o=state.origin, d=state.destination;
+  // 1) Trasy: dojazd i dalej do LA.
+  const [toDest,toLA]=await Promise.all([routeOSRM(o,d), routeOSRM(d,LA)]);
+
+  // 2) Próbki wzdłuż dojazdu (do prognozy wg ETA) i odcinka do LA.
+  const wpDest=sampleAlong(toDest.coords,4);   // start..cel
+  const wpLA=sampleAlong(toLA.coords,3);        // cel..LA
+  const now=new Date();
+
+  // 3) Pogoda godzinowa dla próbek dojazdu — wg ETA (now + frac*czas).
+  const hourlyDest=await Promise.all(wpDest.map(w=>nwsHourly(w.lat,w.lng)));
+  const routeWeather=wpDest.map((w,i)=>{
+    const eta=new Date(now.getTime()+(w.frac||0)*toDest.hours*3600000);
+    const p=periodAt(hourlyDest[i],eta);
+    return p?Object.assign({eta,frac:w.frac},p):{eta,frac:w.frac,missing:true};
+  });
+  // Pogoda w celu: przyjazd + min nocna z najbliższych 14h.
+  const destPeriods=hourlyDest[hourlyDest.length-1];
+  const arrETA=new Date(now.getTime()+toDest.hours*3600000);
+  const destArrival=periodAt(destPeriods,arrETA);
+  let overnightMin=null;
+  if(destPeriods){ const next=destPeriods.filter(p=>{const t=new Date(p.startTime).getTime();return t>=arrETA.getTime()&&t<=arrETA.getTime()+14*3600000;});
+    if(next.length) overnightMin=Math.min(...next.map(p=>p.temperatureUnit==='F'?F2C(p.temperature):p.temperature)); }
+  // Pogoda na odcinku do LA (orientacyjnie, najbliższy okres).
+  const hourlyLA=await Promise.all(wpLA.map(w=>nwsHourly(w.lat,w.lng)));
+  const laWeather=wpLA.map((w,i)=>{const p=periodAt(hourlyLA[i],new Date(now.getTime()+toDest.hours*3600000));return p||{missing:true};});
+
+  // 4) Alerty: start, próbki, cel, próbki do LA, LA (dedup po kluczu).
+  const alertPts=[]; const addPt=p=>{const k=p.lat.toFixed(2)+','+p.lng.toFixed(2); if(!alertPts.some(q=>q.k===k))alertPts.push({k,lat:p.lat,lng:p.lng});};
+  [o,...wpDest,d,...wpLA,LA].forEach(addPt);
+  const alertRes=await Promise.all(alertPts.map(p=>nwsAlerts(p.lat,p.lng).then(r=>({pt:p,r}))));
+  const onRouteAlerts=[],atDestAlerts=[],onwardAlerts=[];
+  const mapAlerts=[],seenAl=new Set();
+  alertRes.forEach(({r})=>{ if(!r)return; r.forEach(al=>{ if(al.geometry&&al.id&&!seenAl.has(al.id)){ seenAl.add(al.id); mapAlerts.push(al);} }); });
+  alertRes.forEach(({pt,r})=>{ if(!r)return; const dDest=haversine(pt.lat,pt.lng,d.lat,d.lng); const inLA=haversine(pt.lat,pt.lng,LA.lat,LA.lng);
+    r.forEach(al=>{
+      if(dDest<25) atDestAlerts.push(al);
+      else if(distToPath(pt.lat,pt.lng,toLA.coords)<distToPath(pt.lat,pt.lng,toDest.coords)) onwardAlerts.push(al);
+      else onRouteAlerts.push(al);
+    });
+  });
+
+  // 5) Pożary + trzęsienia w korytarzu.
+  const corridor=[o,d,LA];
+  const bbF=bboxOf(corridor,2.5), bbQ=bboxOf(corridor,2.0);
+  const [fireList,quakeList,perimList]=await Promise.all([fires(bbF),quakes(bbQ),firePerims(bbF)]);
+  // Wybór najbardziej ISTOTNEGO pożaru dla odcinka (wg ryzyka, nie tylko dystansu).
+  const pickFire=(distFn)=>{ if(!fireList)return null; let best=null;
+    fireList.forEach(f=>{ const dist=distFn(f); const tier=fireTier(dist,f.size,f.contained);
+      const cand={name:f.name,dist,size:f.size,contained:f.contained,tier};
+      if(!best||cand.tier>best.tier||(cand.tier===best.tier&&cand.dist<best.dist)) best=cand; });
+    return best; };
+  const fireRoute=pickFire(f=>distToPath(f.lat,f.lng,toDest.coords));
+  const fireOnward=pickFire(f=>distToPath(f.lat,f.lng,toLA.coords));
+  const fireDest=pickFire(f=>haversine(f.lat,f.lng,d.lat,d.lng));
+  let quakeDest=null,quakeMax=0; const quakeNear=[];
+  if(quakeList) quakeList.forEach(q=>{ const dist=haversine(q.lat,q.lng,d.lat,d.lng); if(dist<200){quakeNear.push({...q,dist}); if(q.mag>quakeMax)quakeMax=q.mag; if(!quakeDest||dist<quakeDest.dist)quakeDest={mag:q.mag,dist,place:q.place,time:q.time};} });
+
+  // 6) Plan jazdy pod drzemki + KEMPINGI (kamper) + ATRAKCJE dla rodziny.
+  const plan=napPlan(toDest.hours);
+  const destCamp=await findCampground(d.lat,d.lng);
+  let split=null, overnightFamily=null;
+  if(plan.totalDays>1){
+    const mid=pointAtHours(toDest.coords,toDest.hours,plan.days[0].driven); // koniec dnia 1
+    const camp=await findCampground(mid.lat,mid.lng);
+    const cpt = camp&&camp.best ? camp.best : mid;
+    overnightFamily=await findFamilyPOI(cpt.lat,cpt.lng,25000);
+    split={ needed:true, plan, lat:cpt.lat, lng:cpt.lng, camp };
+  }
+  const destFamily=await findFamilyPOI(d.lat,d.lng,20000);
+
+  // 6b) PALIWO: stacje przy trasie dojazdu + długie odcinki bez tankowania.
+  const fuelMi=parseInt(localStorage.getItem('rt2_fuelmi')||'0',10)||0;
+  const fuel=await fuelAlongRoute(toDest.coords);
+  const fuelInfo = fuel ? buildFuelInfo(fuel, fuelMi, toDest.km) : (fuelMi?{rangeMi:fuelMi}:null);
+
+  // 6c) Drogi: zdarzenia/zamknięcia przez opcjonalny proxy (CORS).
+  const roadProxy=localStorage.getItem('rt2_roadproxy');
+  const roadEvents = roadProxy ? await fetchRoadEvents(roadProxy, toDest.coords.concat(toLA.coords)) : null;
+
+  // 7) Pożary na mapę (z dystansem, rozmiarem, opanowaniem i poziomem ryzyka).
+  let mapFires=[];
+  if(fireList){ mapFires=fireList.map(f=>{
+    const dRoute=distToPath(f.lat,f.lng,toDest.coords), dLA=distToPath(f.lat,f.lng,toLA.coords), dDest=haversine(f.lat,f.lng,d.lat,d.lng);
+    const dist=Math.min(dRoute,dLA,dDest);
+    const where=(dRoute<=dLA&&dRoute<=dDest)?'trasy dojazdu':(dDest<=dLA?'celu':'odcinka do LA');
+    return {name:f.name,lat:f.lat,lng:f.lng,dist,where,size:f.size,contained:f.contained,tier:fireTier(dist,f.size,f.contained)};
+  }).filter(f=>f.dist<350).sort((a,b)=>(b.tier-a.tier)||(a.dist-b.dist)).slice(0,40); }
+
+  state.analysis={
+    origin:o, destination:d,
+    drive:{ hours:toDest.hours, km:toDest.km, estimated:toDest.estimated, arrETA, split, destCamp, plan,
+            departNow:now, optimal:optimalDeparture(toDest.hours) },
+    onward:{ hours:toLA.hours, km:toLA.km, estimated:toLA.estimated },
+    routeWeather, destArrival, overnightMin, laWeather,
+    alerts:{ onRoute:dedupAlerts(onRouteAlerts), atDest:dedupAlerts(atDestAlerts), onward:dedupAlerts(onwardAlerts) },
+    fires:{ route:fireRoute, dest:fireDest, onward:fireOnward, hasData:!!fireList },
+    quakes:{ dest:quakeDest, max:quakeMax, near:quakeNear, hasData:!!quakeList },
+    geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:(split.camp&&split.camp.best?split.camp.best.name:'punkt ~6h trasy')}:null },
+    mapFires, mapAlerts, firePerims:perimList, roadEvents,
+    family:{ dest:destFamily, overnight:overnightFamily }, fuel:fuelInfo,
+    dataTime:new Date(),
+  };
+  state.loading=false; setBusy(false); renderAll();
+}
+function dedupAlerts(arr){ const seen=new Set(); return arr.filter(a=>{const k=a.event; if(seen.has(k))return false; seen.add(k); return true;}); }
+function optimalDeparture(h){ if(!h)return null; let dep=12-h-0.5; if(dep<MIN_DEPART_H)dep=MIN_DEPART_H; return pad2(Math.floor(dep))+':'+pad2(Math.round((dep-Math.floor(dep))*60)); }
+
+/* ====================================================== computeVerdict() */
+function rank(c){ return {green:1,yellow:2,red:3}[c]; }
+function worst(a,b){ return rank(a)>=rank(b)?a:b; }
+
+// Poziom ryzyka pożaru: uwzględnia ROZMIAR i OPANOWANIE, nie tylko dystans.
+// Mały, opanowany pożar 20 km od trasy = brak ryzyka (tier 0).
+function fireTier(dist,size,contained){
+  const acres=size||0;
+  const active=(contained==null)||contained<90;   // opanowany >90% pomijamy
+  if(!active) return 0;
+  if(dist<8) return 3;                              // praktycznie na drodze
+  if(acres>=1000 && dist<80) return 3;             // duży i blisko
+  if(acres>=300  && dist<40) return 3;
+  if(acres>=1000 && dist<150) return 2;
+  if(acres>=300  && dist<100) return 2;
+  if(acres>=50   && dist<40)  return 2;
+  if(acres>=20   && dist<15)  return 2;            // mały, ale tuż przy trasie
+  return 0;                                         // reszta: informacyjnie, bez alarmu
+}
+function fmtAcres(a){ if(a==null)return ''; return a>=1000?`${(a/1000).toFixed(1)}k ac`:`${Math.round(a)} ac`; }
+function fireLabel(f){ return `Pożar „${f.name}" ${Math.round(f.dist)} km${f.size!=null?', '+fmtAcres(f.size):''}${f.contained!=null?`, ${Math.round(f.contained)}% opan.`:''}`; }
+
+// Ocena nogi: zwraca {color, reasons[]}. Konserwatywnie.
+function assessLeg(opts){
+  const r={color:'green',reasons:[]};
+  const esc=(c)=>{ r.color=worst(r.color,c); };
+  // alerty
+  (opts.alerts||[]).forEach(al=>{ if(al.severity==='warning'){esc('red');r.reasons.push('Ostrzeżenie NWS: '+al.event);} else {esc('yellow');r.reasons.push('Advisory: '+al.event);} });
+  // pogoda (lista próbek lub pojedyncza)
+  (opts.weather||[]).forEach(w=>{
+    if(w.missing) return;
+    if(w.tempC!=null && w.tempC>43){esc('red');r.reasons.push(`Skrajny upał ${Math.round(w.tempC)}°C${w.where?' ('+w.where+')':''}`);}
+    else if(w.tempC!=null && w.tempC>37){esc('yellow');r.reasons.push(`Upał ${Math.round(w.tempC)}°C${w.where?' ('+w.where+')':''}`);}
+    // WIATR — progi zaostrzone dla wysokiego kampera (porywy groźne dla burty).
+    const sus=w.windKmh||0, gust=w.gustKmh||0, wmax=Math.max(sus,gust);
+    if(sus>65||gust>80){esc('red');r.reasons.push(`Silny wiatr ${Math.round(wmax)} km/h — groźny dla wysokiego kampera`);}
+    else if(sus>45||gust>55){esc('yellow');r.reasons.push(`Wiatr ${Math.round(wmax)} km/h${gust>sus+15?' (porywy)':''} — uwaga, kamper`);}
+    // BURZE / OPADY
+    if(w.hasStorm){esc('yellow');r.reasons.push(`Burze${w.precip?` (${w.precip}% opadów)`:''}`);}
+    else if(w.precip>=60){esc('yellow');r.reasons.push(`Intensywne opady ${w.precip}%`);}
+  });
+  // pożar (wg poziomu ryzyka)
+  if(opts.fire){ const t=opts.fire.tier!=null?opts.fire.tier:0;
+    if(t>=3){esc('red');r.reasons.push(fireLabel(opts.fire));}
+    else if(t>=2){esc('yellow');r.reasons.push(fireLabel(opts.fire)+' — monitoruj');} }
+  // trzęsienia
+  if(opts.quake){ if(opts.quake.mag>=6&&opts.quake.dist<200){esc('red');r.reasons.push(`Trzęsienie M${opts.quake.mag.toFixed(1)} ${Math.round(opts.quake.dist)} km`);}
+    else if(opts.quake.mag>=4.5&&opts.quake.dist<150){esc('yellow');r.reasons.push(`Niedawne trzęsienie M${opts.quake.mag.toFixed(1)} ${Math.round(opts.quake.dist)} km`);} }
+  return r;
+}
+
+function computeVerdict(A){
+  if(!A) return {overall:{color:'gray',badge:'🧭',title:'Wpisz cel',body:'',meta:''}};
+  // Czy mamy w ogóle dane? (wszystko padło)
+  const noWx = A.routeWeather.every(w=>w.missing) && !A.destArrival;
+  const noAny = noWx && A.alerts.onRoute.length===0 && A.alerts.atDest.length===0 && !A.fires.hasData && !A.quakes.hasData;
+
+  // NOGA 1 — DOJAZD
+  const rw=A.routeWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,gustKmh:w.gustKmh,precip:w.precip,hasStorm:w.hasStorm}));
+  const leg1=assessLeg({alerts:A.alerts.onRoute, weather:rw, fire:A.fires.route});
+  // NOGA 2 — MIEJSCE
+  const destWx=[]; if(A.destArrival) destWx.push({tempC:A.destArrival.tempC,windKmh:A.destArrival.windKmh,gustKmh:A.destArrival.gustKmh,precip:A.destArrival.precip,hasStorm:A.destArrival.hasStorm,where:A.destination.name.split(',')[0]});
+  const leg2=assessLeg({alerts:A.alerts.atDest, weather:destWx, fire:A.fires.dest, quake:A.quakes.dest});
+  // NOGA 3 — DALEJ DO LA
+  const laWx=A.laWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,gustKmh:w.gustKmh,precip:w.precip,hasStorm:w.hasStorm}));
+  const leg3=assessLeg({alerts:A.alerts.onward, weather:laWx, fire:A.fires.onward});
+
+  let overallColor=worst(worst(leg1.color,leg2.color),leg3.color);
+  if(noAny) return { leg1,leg2,leg3, overall:{color:'yellow',badge:'🟡',title:'Nie mogę zweryfikować',
+    body:'Żadne źródło nie odpowiedziało. Sprawdź ręcznie pogodę (weather.gov), 511 i pożary zanim ruszysz.',
+    meta:metaLine(A)} };
+
+  // Paliwo: odcinek bez stacji dłuższy niż zasięg = realne ryzyko.
+  let fuelNote='';
+  if(A.fuel){ if(A.fuel.cannotReach){ overallColor=worst(overallColor,'red'); fuelNote=' ⛽ Nie dojedziecie na obecnym paliwie — zatankuj.'; }
+    else if(A.fuel.rangeExceeded){ overallColor=worst(overallColor,'yellow'); fuelNote=' ⛽ Długi odcinek bez stacji — zatankuj do pełna.'; } }
+
+  const dest=A.destination.name.split(',').slice(0,2).join(',');
+  const driveTxt=`${fmtH(A.drive.hours)} (${Math.round(A.drive.km)} km)${A.drive.estimated?' ~szac.':''}`;
+  let title,body,badge;
+  if(overallColor==='red'){
+    badge='🔴'; title='RYZYKO — nie jedź teraz';
+    const culprit = leg1.color==='red'?{n:'dojazd',l:leg1}:leg2.color==='red'?{n:'miejsce',l:leg2}:leg3.color==='red'?{n:'odcinek do LA',l:leg3}:null;
+    body= culprit ? `Zagrożenie (${culprit.n}): ${culprit.l.reasons.slice(0,2).join('; ')}. Poczekaj lub zmień cel.` : 'Sprawdź ostrzeżenia poniżej przed wyjazdem.';
+  } else if(overallColor==='yellow'){
+    badge='🟡'; title='OSTROŻNIE';
+    const allR=[...leg1.reasons,...leg2.reasons,...leg3.reasons];
+    body=`Dojazd ${driveTxt}.${allR.length?' '+allR.slice(0,2).join('; ')+'.':''} Wyjedź wcześnie i monitoruj.`;
+  } else {
+    badge='🟢'; title=`Bezpiecznie — jedź do ${dest}`;
+    body=`Dojazd ${driveTxt}. Trasa, miejsce i odcinek dalej do LA: czysto.${A.drive.split?' Lepiej rozłóż na 2 dni (poniżej).':''}`;
+  }
+  body+=fuelNote;
+  return { leg1,leg2,leg3, overall:{color:overallColor,badge,title,body,meta:metaLine(A)} };
+}
+function metaLine(A){
+  const parts=[];
+  parts.push('Dane z '+fmtHourDate(A.dataTime));
+  parts.push('Start: '+(A.origin.name||`${A.origin.lat.toFixed(2)},${A.origin.lng.toFixed(2)}`));
+  if(!state.online) parts.push('🔴 OFFLINE — potwierdź zanim ruszysz');
+  return parts.join(' • ');
+}
+
+/* ====================================================== RENDER */
+const COLOR={green:'bg-green-700',yellow:'bg-yellow-600',red:'bg-red-700',gray:'bg-gray-900'};
+const BORDER={green:'border-green-500',yellow:'border-yellow-400',red:'border-red-500',gray:'border-gray-600'};
+const TXT={green:'text-green-400',yellow:'text-yellow-300',red:'text-red-400',gray:'text-gray-400'};
+const DOT={green:'🟢',yellow:'🟡',red:'🔴',gray:'⚪'};
+
+function setBusy(b){ const i=document.getElementById('locIcon'); /* refresh spinner on verdict */ }
+function renderOrigin(){
+  const el=document.getElementById('originLabel');
+  if(state.origin) el.textContent='📍 '+(state.origin.name||`${state.origin.lat.toFixed(3)}, ${state.origin.lng.toFixed(3)}`)+(state.origin.accuracy?` (±${Math.round(state.origin.accuracy)}m)`:'');
+}
+function renderVerdict(){
+  const V=computeVerdict(state.analysis); const o=V.overall;
+  const sec=document.getElementById('verdict');
+  sec.className=`px-5 py-6 min-h-[40vh] flex flex-col justify-center transition-colors duration-300 ${COLOR[o.color]||'bg-gray-900'} ${o.color==='gray'?'':'text-white'}`;
+  document.getElementById('vBadge').textContent= state.loading?'⏳':o.badge;
+  document.getElementById('vTitle').textContent= state.loading?'Analizuję warunki…':o.title;
+  document.getElementById('vBody').textContent= state.loading?(state.destination?('Cel: '+state.destination.name):''):o.body;
+  document.getElementById('vMeta').textContent= o.meta||'';
+  return V;
+}
+function legCard(elId,emoji,label,leg){
+  const el=document.getElementById(elId);
+  el.className=`bg-gray-900 rounded-xl border-l-4 ${BORDER[leg.color]} p-3`;
+  el.innerHTML=`<div class="flex justify-between items-center"><span class="font-semibold text-sm">${emoji} ${label}</span><span>${DOT[leg.color]}</span></div>`
+    +`<div class="text-xs ${leg.color==='green'?'text-green-400':TXT[leg.color]} mt-1">${leg.reasons.length?leg.reasons.join(' • '):'Czysto'}</div>`;
+}
+function tile(elId,statusId,bodyId,color,statusTxt,html){
+  const el=document.getElementById(elId);
+  el.className=`bg-gray-900 rounded-xl border-l-4 ${BORDER[color]}`;
+  const st=document.getElementById(statusId); st.textContent=statusTxt; st.className='text-xs '+TXT[color];
+  document.getElementById(bodyId).innerHTML=html;
+}
+// Mapa: trasy + pinezki (start, nocleg, cel, LA, pożary, trzęsienia).
+function emojiIcon(e,size){ size=size||24; return L.divIcon({html:`<div class="emoji-pin">${e}</div>`,className:'',iconSize:[size,size],iconAnchor:[size/2,size/2]}); }
+function renderMap(A){
+  const wrap=document.getElementById('mapWrap');
+  if(typeof L==='undefined'||!A.geo){ wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  if(!_map){
+    _map=L.map('map',{zoomControl:true,attributionControl:false}).setView([34,-112],5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,subdomains:'abcd'}).addTo(_map);
+    _layer=L.layerGroup().addTo(_map);
+  }
+  _layer.clearLayers();
+  const g=A.geo, pts=[];
+  // 1) OBSZARY (pod trasą): strefy ostrzeżeń pogodowych NWS + obrysy pożarów.
+  (A.mapAlerts||[]).forEach(al=>{ if(!al.geometry)return; const col=al.severity==='warning'?'#ef4444':'#eab308';
+    try{ L.geoJSON(al.geometry,{style:{color:col,weight:1,fillColor:col,fillOpacity:.18,dashArray:'4'}}).addTo(_layer).bindPopup(`⚠️ ${al.event}`); }catch(e){} });
+  if(A.firePerims&&A.firePerims.features&&A.firePerims.features.length){
+    try{ L.geoJSON(A.firePerims,{style:{color:'#f97316',weight:1.5,fillColor:'#ef4444',fillOpacity:.4},
+      onEachFeature:(f,l)=>{ const p=f.properties||{}; l.bindPopup('🔥 obszar pożaru: '+(p.poly_IncidentName||p.IncidentName||'')); }}).addTo(_layer); }catch(e){} }
+  // 2) TRASY (na wierzchu obszarów).
+  const line=(coords,color)=>{ if(!coords||coords.length<2)return; const ll=coords.map(c=>[c[1],c[0]]); ll.forEach(p=>pts.push(p)); L.polyline(ll,{color,weight:4,opacity:.95}).addTo(_layer); };
+  line(g.toDest,'#f59e0b'); line(g.toLA,'#60a5fa');
+  const mark=(lat,lng,e,label)=>{ if(lat==null)return; pts.push([lat,lng]); L.marker([lat,lng],{icon:emojiIcon(e,26)}).addTo(_layer).bindPopup(label); };
+  mark(g.origin.lat,g.origin.lng,'🟢','Start: '+(g.origin.name||''));
+  if(g.mid) mark(g.mid.lat,g.mid.lng,'🛏️','Nocleg (podział na 2 dni): '+(g.mid.name||''));
+  mark(g.dest.lat,g.dest.lng,'🎯','Cel: '+g.dest.name);
+  mark(g.LA.lat,g.LA.lng,'🌴','Los Angeles (cel końcowy)');
+  (A.mapFires||[]).forEach(f=>{ const col=(f.tier>=3)?'#ef4444':(f.tier>=2)?'#f59e0b':'#9ca3af'; const rad=f.tier>=2?7:5; pts.push([f.lat,f.lng]);
+    const info=`🔥 ${f.name}<br>${Math.round(f.dist)} km od ${f.where}${f.size!=null?'<br>'+fmtAcres(f.size):''}${f.contained!=null?` • ${Math.round(f.contained)}% opanowany`:''}${(f.tier||0)===0?'<br><i>bez ryzyka dla trasy</i>':''}`;
+    L.circleMarker([f.lat,f.lng],{radius:rad,color:col,fillColor:col,fillOpacity:.85,weight:1}).addTo(_layer).bindPopup(info); });
+  ((A.quakes&&A.quakes.near)||[]).forEach(q=>{ pts.push([q.lat,q.lng]);
+    L.marker([q.lat,q.lng],{icon:emojiIcon('🌐',18)}).addTo(_layer).bindPopup(`Trzęsienie M${q.mag.toFixed(1)}<br>${q.place||''}`); });
+  // atrakcje dla rodziny
+  const fam=[].concat((A.family&&A.family.dest)||[],(A.family&&A.family.overnight)||[]);
+  const seenF=new Set();
+  fam.forEach(p=>{ if(seenF.has(p.name))return; seenF.add(p.name); pts.push([p.lat,p.lng]);
+    L.marker([p.lat,p.lng],{icon:emojiIcon(p.emoji,18)}).addTo(_layer).bindPopup(`${p.emoji} ${p.name}<br>${p.kind}`); });
+  // sugerowana stacja paliw
+  if(A.fuel&&A.fuel.refuelStation){ const s=A.fuel.refuelStation; pts.push([s.lat,s.lng]);
+    L.marker([s.lat,s.lng],{icon:emojiIcon('⛽',18)}).addTo(_layer).bindPopup(`⛽ Tankowanie: ${s.name}`); }
+  if(pts.length){ try{ _map.fitBounds(L.latLngBounds(pts).pad(0.18)); }catch(e){} }
+  setTimeout(()=>{ try{_map.invalidateSize();}catch(e){} },200);
+  document.getElementById('mapLegend').innerHTML='🟠 dojazd · 🔵 do LA · 🟥 pożar · ▦ pogoda · ⛽ paliwo · 🛝 dzieci';
+}
+function renderAll(){
+  const A=state.analysis; if(!A){ renderVerdict(); return; }
+  const V=renderVerdict();
+  ['mapWrap','legs','driveCard','tiles','sections'].forEach(id=>document.getElementById(id).classList.remove('hidden'));
+
+  renderMap(A);
+  const dn=A.destination.name.split(',')[0];
+  legCard('leg1','🚗',`Dojazd → ${dn}`,V.leg1);
+  legCard('leg2','📍',`Na miejscu (${dn})`,V.leg2);
+  legCard('leg3','🌴',`${dn} → LA`,V.leg3);
+
+  // CZAS / PLAN POD DRZEMKI / KEMPINGI
+  const campLine=(c)=> c&&c.best ? `🏕️ ${c.best.name}${c.best.rv?' (RV)':''} (~${Math.round(c.best.dist)} km)` : '🏕️ brak kempingu w pobliżu — sprawdź ręcznie';
+  const napTxt=(w)=>`drzemka ${w.nap} (~${fmtH(w.use)}${w.use<w.planned?' z '+fmtH(w.planned):''})`;
+  const plan=A.drive.plan;
+  let dt=`Jedzie się <b>${fmtH(A.drive.hours)}</b> (${Math.round(A.drive.km)} km)${A.drive.estimated?' — szacunek (OSRM niedostępny)':''}. Czysty czas jazdy bez postojów → ~${fmtHourDate(A.drive.arrETA)}.`;
+  dt+=`<div class="mt-2 text-gray-400">🍼 Plan pod drzemki Eleny — komfortowo ~${fmtH(COMFY_DAY_H)}/dzień (okno 1 ~${fmtH(NAP1_H)} + postój + okno 2 ~${fmtH(NAP2_H)}). Nocna jazda tylko awaryjnie.</div>`;
+  if(plan && plan.totalDays<=1){
+    const ws=plan.days[0].windows.map(napTxt).join(' + postój + ');
+    dt+=`<div class="mt-1">✅ Zmieścicie się w <b>1 dniu</b>: ${ws}. Wyjedźcie, gdy Elena zaśnie.</div>`;
+  } else if(plan){
+    dt+=`<div class="mt-1 text-amber-300">⚠️ Za długo na 1 dzień z dzieckiem — rozłóżcie na ${plan.totalDays} dni:</div>`;
+    plan.days.forEach(day=>{
+      const ws=day.windows.map(napTxt).join(' + postój + ');
+      const dest = day.day===plan.totalDays ? `→ ${A.destination.name.split(',')[0]}` : (day.day===1?`→ nocleg: ${campLine(A.drive.split&&A.drive.split.camp)}`:'→ nocleg po drodze');
+      dt+=`<div>• Dzień ${day.day}: ${ws} (≈${fmtH(day.driven)}) ${dest}</div>`;
+    });
+    // opcja awaryjna: dobić resztę nocą tego samego dnia
+    const rest=A.drive.hours-plan.days[0].driven;
+    if(plan.totalDays===2 && rest<=NIGHT_MAX_EXTRA_H)
+      dt+=`<div class="mt-1 text-gray-500">Awaryjnie: zamiast nocować, dobijcie dziś ~${fmtH(rest)} po zmroku (tylko jeśli musicie).</div>`;
+    if(A.drive.split&&A.drive.split.camp&&A.drive.split.camp.more&&A.drive.split.camp.more.length>1)
+      dt+=`<div class="text-gray-500 text-[11px]">Inne kempingi na nocleg: ${A.drive.split.camp.more.slice(1,4).map(c=>c.name).join(' • ')}</div>`;
+  }
+  dt+=`<div class="mt-2">Nocleg przy celu: ${campLine(A.drive.destCamp)}</div>`;
+  const famLine=(list)=> list&&list.length ? list.slice(0,3).map(p=>`${p.emoji} ${p.name} (~${Math.round(p.dist)} km)`).join(' • ') : null;
+  const fd=famLine(A.family&&A.family.dest);
+  if(fd) dt+=`<div class="mt-1 text-emerald-300">👨‍👩‍👧 Dla dzieci przy celu: ${fd}</div>`;
+  const fo=famLine(A.family&&A.family.overnight);
+  if(fo) dt+=`<div class="text-emerald-300">👨‍👩‍👧 Przy noclegu po drodze: ${fo}</div>`;
+  dt+=`<div class="mt-1 text-gray-400">Dalej do LA: ${fmtH(A.onward.hours)} (${Math.round(A.onward.km)} km).</div>`;
+  document.getElementById('driveBody').innerHTML=dt;
+
+  // PALIWO
+  renderFuel(A);
+
+  // POGODA (temp + wiatr/porywy + burze na każdym punkcie)
+  let wColor='gray',wRows=[],hottest=null,windiest=0;
+  A.routeWeather.forEach((w,i)=>{
+    if(w.missing){wRows.push(`<div>Punkt ${i+1}: <span class="text-gray-500">brak</span></div>`);return;}
+    const t=Math.round(w.tempC); const gust=w.gustKmh||0, sus=w.windKmh||0, wmax=Math.max(sus,gust);
+    let c=t<30?'green':t<=37?'yellow':'red';
+    if(w.hasStorm&&c==='green')c='yellow';
+    if((sus>45||gust>55)&&c==='green')c='yellow'; if(sus>65||gust>80)c='red';
+    wColor=worst(wColor==='gray'?'green':wColor,c); if(hottest==null||w.tempC>hottest)hottest=w.tempC; if(wmax>windiest)windiest=wmax;
+    const windTxt = wmax>=20 ? ` 💨${Math.round(sus)}${gust>sus+10?`/${Math.round(gust)}⤴`:''} km/h` : '';
+    const stormTxt = w.hasStorm ? ' ⛈️burza' : '';
+    wRows.push(`<div>${i===0?'Start':i===A.routeWeather.length-1?'Cel':'Trasa '+i} (~${fmtHourDate(w.eta)}): <b>${t}°C</b>, ${w.short}${w.precip?` ☔${w.precip}%`:''}${windTxt}${stormTxt}</div>`);
+  });
+  wRows.push(`<div class="text-gray-500 mt-1">💨 = wiatr stały/porywy. Progi dla kampera: żółty &gt;45, czerwony &gt;65 km/h.</div>`);
+  if(A.overnightMin!=null) wRows.push(`<div class="text-gray-400">Noc w celu min ~${Math.round(A.overnightMin)}°C</div>`);
+  tile('tileWeather','wStatus','wBody',wColor==='gray'?'gray':wColor,hottest!=null?`${Math.round(hottest)}°C${windiest>=45?' 💨':''}`:'—',wRows.join('')||'<span class="text-gray-500">Brak danych.</span>');
+
+  // ALERTY
+  const allAl=[['Trasa',A.alerts.onRoute],['Cel',A.alerts.atDest],['Do LA',A.alerts.onward]];
+  let aColor='green',aHas=false,aRows=[],aWorst='brak';
+  allAl.forEach(([lbl,list])=>{ list.forEach(al=>{ aHas=true; const c=al.severity==='warning'?'red':'yellow'; aColor=worst(aColor,c); if(c==='red')aWorst='WARNING';else if(aWorst!=='WARNING')aWorst='advisory';
+    aRows.push(`<div class="${TXT[c]}">${lbl}: ${al.event}</div>`); }); });
+  if(!aHas){ aRows=['<span class="text-green-400">Brak alertów na trasie, w celu i dalej.</span>']; aColor='green'; }
+  tile('tileAlerts','aStatus','aBody',aColor,aWorst,aRows.join(''));
+
+  // POŻARY (ryzyko = dystans + rozmiar + opanowanie, nie sam dystans)
+  let fRows=[],fColor='gray',maxTier=0;
+  if(!A.fires.hasData){ fRows=['<span class="text-gray-500">Brak danych.</span>']; }
+  else{
+    const tierC=t=>t>=3?'red':t>=2?'yellow':'green';
+    const items=[['Dojazd',A.fires.route],['Cel',A.fires.dest],['Do LA',A.fires.onward]];
+    const seen=new Set();
+    items.forEach(([lbl,f])=>{ if(!f||seen.has(f.name+f.dist))return; seen.add(f.name+f.dist);
+      maxTier=Math.max(maxTier,f.tier||0); const c=tierC(f.tier||0);
+      const meta=`${Math.round(f.dist)} km${f.size!=null?', '+fmtAcres(f.size):''}${f.contained!=null?`, ${Math.round(f.contained)}% opan.`:''}`;
+      const note=(f.tier||0)===0?' <span class="text-gray-500">(bez ryzyka dla trasy)</span>':'';
+      fRows.push(`<div class="${c==='green'?'text-gray-300':TXT[c]}">${lbl}: „${f.name}" ${meta}${note}</div>`); });
+    if(!fRows.length){fRows=['<span class="text-green-400">Brak pożarów w pobliżu (250 km).</span>'];}
+    fColor=maxTier>=3?'red':maxTier>=2?'yellow':'green';
+  }
+  tile('tileFire','fStatus','fBody',fColor==='gray'?'gray':fColor,maxTier>=3?'RYZYKO':maxTier>=2?'monitoruj':(A.fires.hasData?'OK':'—'),fRows.join(''));
+
+  // TRZĘSIENIA
+  let qRows=[],qColor='gray';
+  if(!A.quakes.hasData){ qRows=['<span class="text-gray-500">Brak danych.</span>']; }
+  else if(!A.quakes.near.length){ qRows=['<span class="text-green-400">Brak trzęsień M≥3 (7 dni, 200 km).</span>']; qColor='green'; }
+  else{
+    qColor=A.quakes.max>=6?'red':A.quakes.max>=4.5?'yellow':'green';
+    A.quakes.near.sort((a,b)=>b.mag-a.mag).slice(0,4).forEach(q=>{ const c=q.mag>=6?'red':q.mag>=4.5?'yellow':'green';
+      qRows.push(`<div class="${c==='green'?'':TXT[c]}">M${q.mag.toFixed(1)} • ${Math.round(q.dist)} km • ${q.place||''}</div>`); });
+  }
+  tile('tileQuake','qStatus','qBody',qColor==='gray'?'gray':qColor,A.quakes.hasData?`M${(A.quakes.max||0).toFixed(1)}`:'—',qRows.join(''));
+
+  // TIMELINE (temp + wiatr/porywy + burza wg ETA)
+  document.getElementById('timelineBody').innerHTML = A.routeWeather.map((w,i)=>{
+    if(w.missing) return `<div class="text-gray-500">${i===0?'Start':i===A.routeWeather.length-1?'Cel':'Trasa '+i}: brak prognozy</div>`;
+    const gust=w.gustKmh||0,sus=w.windKmh||0,wmax=Math.max(sus,gust);
+    const wind=wmax>=20?` 💨${Math.round(sus)}${gust>sus+10?'/'+Math.round(gust)+'⤴':''}`:'';
+    return `<div class="flex justify-between gap-2"><span class="text-gray-400 shrink-0">${i===0?'Start':i===A.routeWeather.length-1?'Cel':'~'+Math.round((w.frac||0)*100)+'%'} • ${fmtHourDate(w.eta)}</span><span class="text-right"><b>${Math.round(w.tempC)}°C</b> ${w.short}${w.precip?` ☔${w.precip}%`:''}${wind}${w.hasStorm?' ⛈️':''}</span></div>`;
+  }).join('');
+
+  // DROGI: (1) alerty NWS sygnalizujące utrudnienia [działa od razu],
+  //        (2) realne zdarzenia przez opcjonalny proxy, (3) linki ręczne + konfiguracja.
+  const ROAD_RX=/high wind|dust storm|blowing dust|flash flood|flood|winter storm|ice storm|heavy snow|tornado/i;
+  const roadAl=[]; [['Dojazd',A.alerts.onRoute],['Cel',A.alerts.atDest],['Do LA',A.alerts.onward]]
+    .forEach(([lbl,list])=>list.forEach(al=>{ if(ROAD_RX.test(al.event)) roadAl.push(Object.assign({lbl},al)); }));
+  let rh='';
+  if(roadAl.length) rh+=`<div class="text-amber-300 mb-1">⚠️ Alerty mogące oznaczać utrudnienia/zamknięcia:</div>`
+      +roadAl.map(a=>`<div class="${a.severity==='warning'?'text-red-400':'text-yellow-300'}">${a.lbl}: ${a.event}</div>`).join('');
+  else rh+=`<div class="text-green-400">Brak pogodowych alertów drogowych (NWS) na trasie.</div>`;
+  if(A.roadEvents){
+    if(A.roadEvents.error) rh+=`<div class="mt-2 text-gray-500">Proxy dróg: błąd (${A.roadEvents.error}).</div>`;
+    else if(A.roadEvents.items&&A.roadEvents.items.length) rh+=`<div class="mt-2 text-amber-300">🚧 Zdarzenia przy trasie (CA, ${A.roadEvents.items.length}):</div>`
+        +A.roadEvents.items.slice(0,6).map(i=>`<div>${Math.round(i.dist)} km — ${String(i.desc).slice(0,90)}</div>`).join('');
+    else rh+=`<div class="mt-2 text-green-400">Proxy dróg (CA): brak zdarzeń przy trasie.</div>`;
+  }
+  rh+=`<div class="mt-2 text-gray-400">Potwierdź ręcznie tuż przed wyjazdem:</div>`
+    +`<div class="mt-1 space-x-2">`
+    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://drivetexas.org/">TxDOT</a>`
+    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://www.nmroads.com/">NMRoads</a>`
+    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://az511.gov/">AZ511</a>`
+    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://quickmap.dot.ca.gov/">Caltrans</a></div>`;
+  rh+=`<details class="mt-3"><summary class="tap text-amber-400 text-xs">⚙️ Automatyczne zamknięcia (opcjonalne — Cloudflare Worker)</summary>`
+    +`<div class="mt-1 text-gray-400 text-[11px]">Wklej URL swojego proxy (instrukcja w README). Włącza zdarzenia drogowe dla Kalifornii (Caltrans).</div>`
+    +`<input id="roadProxyInput" type="url" inputmode="url" class="tap mt-1 w-full bg-gray-800 rounded px-2 outline-none focus:ring-2 ring-amber-500" placeholder="https://twoj-worker.workers.dev" value="${localStorage.getItem('rt2_roadproxy')||''}">`
+    +`<button id="roadProxySave" class="tap mt-1 bg-amber-500 text-gray-950 font-bold rounded px-3">Zapisz i sprawdź</button></details>`;
+  const roadBody=document.getElementById('roadBody'); roadBody.innerHTML=rh;
+  const rps=document.getElementById('roadProxySave');
+  if(rps) rps.addEventListener('click',()=>{ const v=document.getElementById('roadProxyInput').value.trim();
+    if(v) localStorage.setItem('rt2_roadproxy',v); else localStorage.removeItem('rt2_roadproxy');
+    if(state.destination) loadAnalysis(); });
+
+  renderSources();
+  renderRecent();
+}
+function setBorder(el,color){ el.className=el.className.replace(/border-(gray|green|yellow|red)-\d+/,'').replace(/\s+/g,' ').trim()+' '+BORDER[color]; }
+function renderFuel(A){
+  const inp=document.getElementById('fuelInput'); if(inp&&!inp.value) inp.value=localStorage.getItem('rt2_fuelmi')||'';
+  const body=document.getElementById('fuelBody'), sec=document.getElementById('fuelSec'), st=document.getElementById('fuelStatus');
+  const f=A.fuel;
+  if(!f){ body.innerHTML='<span class="text-gray-500">Brak danych o stacjach (OSM niedostępny).</span>'; setBorder(sec,'gray'); st.textContent='—'; return; }
+  const h=[]; const level=f.gapLevel||'green';
+  if(f.maxGapKm!=null){
+    h.push(`<div class="${level==='red'?TXT.red:level==='yellow'?TXT.yellow:'text-green-400'}">Najdłuższy odcinek bez stacji: <b>~${Math.round(f.maxGapMi)} mil</b> (${Math.round(f.maxGapKm)} km)${f.gapFrom&&f.gapFrom!=='start'?` po „${f.gapFrom}"`:''}.</div>`);
+    h.push(`<div class="text-gray-400">Stacji przy trasie dojazdu: ${f.count}.</div>`);
+  }
+  if(f.rangeMi){
+    if(f.cannotReach) h.push(`<div class="${TXT.red}">⛽ Zasięg ${f.rangeMi} mil < długość dojazdu — zatankuj zanim ruszysz.</div>`);
+    if(f.rangeExceeded) h.push(`<div class="${TXT.red}">⚠️ Odcinek bez stacji dłuższy niż Twój zasięg! Zatankuj do pełna.</div>`);
+    if(f.refuelStation) h.push(`<div>Trzymaj &gt;½ baku → zatankuj do ~${f.refuelByMi} mil. Sugerowana stacja: <b>${f.refuelStation.name}</b> (~${Math.round(f.refuelStation.at/1.60934)} mil).</div>`);
+  } else h.push(`<div class="text-gray-500">Wpisz zasięg (mile), by dostać punkt tankowania „&gt;½ baku".</div>`);
+  body.innerHTML=h.join(''); setBorder(sec,level); st.textContent= level==='red'?'UWAGA':level==='yellow'?'sprawdź':'OK';
+}
+function renderSources(){
+  const A=state.analysis; const el=document.getElementById('sourcesBody');
+  const L=[];
+  L.push(`<div><b>Czas danych:</b> ${A?fmtHourDate(A.dataTime):'—'}</div>`);
+  L.push(`<div><b>Geokoder:</b> Photon/Nominatim (OSM)</div>`);
+  L.push(`<div><b>Trasa/czas:</b> OSRM${A&&A.drive.estimated?' (fallback: szacunek)':''}</div>`);
+  L.push(`<div><b>Pogoda/alerty:</b> api.weather.gov (NWS)</div>`);
+  L.push(`<div><b>Pożary:</b> WFIGS (rozmiar, % opanowania + obrysy) • <b>Trzęsienia:</b> USGS</div>`);
+  L.push(`<div><b>Kempingi:</b> OpenStreetMap / Overpass (camp_site, caravan_site)</div>`);
+  if(state.errors.length) L.push(`<div class="mt-2 text-amber-400"><b>Błędy/odmowy (${state.errors.length}):</b><br>${state.errors.slice(-10).join('<br>')}</div>`);
+  L.push(`<div class="mt-2 text-gray-500">Wszystkie źródła darmowe, bez kluczy.</div>`);
+  el.innerHTML=L.join('');
+}
+
+/* ====================================================== SZUKANIE / RECENT */
+function getRecent(){ try{return JSON.parse(localStorage.getItem('rt2_recent')||'[]');}catch(e){return [];} }
+function addRecent(p){ let r=getRecent().filter(x=>x.name!==p.name); r.unshift({name:p.name,lat:p.lat,lng:p.lng}); r=r.slice(0,6); localStorage.setItem('rt2_recent',JSON.stringify(r)); }
+function renderRecent(){
+  const el=document.getElementById('recent'); const r=getRecent();
+  el.innerHTML=r.map((p,i)=>`<button data-i="${i}" class="recent-chip tap text-xs bg-gray-800 rounded-full px-3 text-gray-300 active:bg-gray-700">${p.name.split(',')[0]}</button>`).join('');
+  el.querySelectorAll('.recent-chip').forEach(b=>b.addEventListener('click',()=>{ const p=getRecent()[+b.dataset.i]; chooseDestination(p); }));
+}
+function renderResults(list){
+  const el=document.getElementById('results');
+  if(!list.length){ el.innerHTML='<div class="text-xs text-gray-500">Nie znaleziono. Doprecyzuj (np. „Sedona, Arizona”).</div>'; return; }
+  el.innerHTML=list.map((p,i)=>`<button data-i="${i}" class="res-item tap w-full text-left text-sm bg-gray-800 rounded-lg px-3 py-2 active:bg-gray-700">📍 ${p.name}</button>`).join('');
+  el.querySelectorAll('.res-item').forEach(b=>b.addEventListener('click',()=>{ chooseDestination(list[+b.dataset.i]); }));
+}
+async function chooseDestination(p){
+  document.getElementById('results').innerHTML='';
+  document.getElementById('searchInput').value=p.name.split(',').slice(0,2).join(',');
+  state.destination=p; addRecent(p);
+  if(!state.origin){ const o=await locate(true); if(!o){ alert('Potrzebuję Twojej pozycji (GPS), aby policzyć dojazd. Zezwól na lokalizację i spróbuj ponownie.'); return; } }
+  await loadAnalysis();
+  document.getElementById('verdict').scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function doSearch(){
+  const q=document.getElementById('searchInput').value.trim(); if(!q) return;
+  state.errors=[]; document.getElementById('results').innerHTML='<div class="text-xs text-gray-400">Szukam…</div>';
+  const list=await geocode(q); renderResults(list);
+  renderSources();
+}
+
+/* ====================================================== INIT */
+document.getElementById('btnSearch').addEventListener('click',doSearch);
+document.getElementById('searchInput').addEventListener('keydown',e=>{ if(e.key==='Enter')doSearch(); });
+document.getElementById('btnLocate').addEventListener('click',()=>locate(true));
+document.getElementById('fuelSave').addEventListener('click',()=>{ const v=document.getElementById('fuelInput').value.trim();
+  if(v) localStorage.setItem('rt2_fuelmi',v); else localStorage.removeItem('rt2_fuelmi');
+  if(state.destination) loadAnalysis(); });
+window.addEventListener('online',()=>{state.online=true;renderVerdict();if(state.destination)loadAnalysis();});
+window.addEventListener('offline',()=>{state.online=false;renderVerdict();});
+
+renderRecent();
+{ const fi=document.getElementById('fuelInput'); if(fi) fi.value=localStorage.getItem('rt2_fuelmi')||''; }
+locate(false);
+if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+
+window.__rt={state,computeVerdict,assessLeg,haversine,geocode,routeOSRM,loadAnalysis,fireTier,napPlan,computeFuelGaps,buildFuelInfo};
+</script>
+</body>
+</html>
