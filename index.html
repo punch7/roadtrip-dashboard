@@ -12,6 +12,8 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcng9Ijk2IiBmaWxsPSIjRkZBNTAwIi8+PHRleHQgeD0iNTAlIiB5PSI1NSUiIGZvbnQtc2l6ZT0iMjgwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCI+8J+bo++4jzwvdGV4dD48L3N2Zz4=">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config = { darkMode:'class' };</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   html { background:#0b0f19; }
   body { -webkit-tap-highlight-color: transparent; padding-bottom: env(safe-area-inset-bottom); }
@@ -20,6 +22,11 @@
   details > summary::-webkit-details-marker { display:none; }
   .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
   input { font-size:16px; } /* nie zoomuj na iOS */
+  #map { height: 260px; background:#11161f; z-index:0; }
+  .leaflet-container { background:#11161f; font:inherit; }
+  .emoji-pin { font-size:22px; line-height:22px; text-align:center; text-shadow:0 0 3px #000,0 0 3px #000; }
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:#1f2937; color:#f3f4f6; }
+  .leaflet-popup-content { margin:8px 10px; font-size:12px; }
 </style>
 </head>
 <body class="dark bg-gray-950 text-gray-100 antialiased">
@@ -49,6 +56,14 @@
     <div id="vTitle" class="text-3xl font-black leading-none mb-3">Wpisz cel podróży</div>
     <div id="vBody" class="text-base leading-snug opacity-95">Apka weźmie Twoją pozycję, policzy dojazd i sprawdzi pogodę, alerty, pożary i trzęsienia — na trasie, w miejscu i dalej do LA.</div>
     <div id="vMeta" class="mt-4 text-xs opacity-80"></div>
+  </section>
+
+  <!-- MAPA -->
+  <section id="mapWrap" class="px-3 pt-2 hidden">
+    <div class="rounded-xl overflow-hidden border border-gray-800 relative">
+      <div id="map"></div>
+      <div id="mapLegend" class="absolute bottom-1 left-1 z-[400] text-[10px] bg-gray-950/80 rounded px-2 py-1 leading-tight pointer-events-none"></div>
+    </div>
   </section>
 
   <!-- 3 NOGI -->
@@ -157,6 +172,7 @@ const state = {
   online: navigator.onLine,
   errors:[],
 };
+let _map=null,_layer=null; // Leaflet (lazy init)
 function cacheSet(k,d){ try{localStorage.setItem('rt2_'+k,JSON.stringify({t:Date.now(),d}));}catch(e){} }
 function cacheGet(k){ try{const r=localStorage.getItem('rt2_'+k);return r?JSON.parse(r):null;}catch(e){return null;} }
 
@@ -382,8 +398,17 @@ async function loadAnalysis(){
   if(toDest.hours>MAX_DAILY_DRIVE_H){
     const mid=pointAtHours(toDest.coords,toDest.hours,MAX_DAILY_DRIVE_H);
     const midName=await reverseName(mid.lat,mid.lng);
-    split={ needed:true, day1H:Math.min(MAX_DAILY_DRIVE_H,toDest.hours), day2H:toDest.hours-MAX_DAILY_DRIVE_H, midName };
+    split={ needed:true, day1H:Math.min(MAX_DAILY_DRIVE_H,toDest.hours), day2H:toDest.hours-MAX_DAILY_DRIVE_H, midName, lat:mid.lat, lng:mid.lng };
   }
+
+  // 7) Pożary do naniesienia na mapę (z dystansem do najbliższego elementu).
+  let mapFires=[];
+  if(fireList){ mapFires=fireList.map(f=>{
+    const dRoute=distToPath(f.lat,f.lng,toDest.coords), dLA=distToPath(f.lat,f.lng,toLA.coords), dDest=haversine(f.lat,f.lng,d.lat,d.lng);
+    const dist=Math.min(dRoute,dLA,dDest);
+    const where=(dRoute<=dLA&&dRoute<=dDest)?'trasy dojazdu':(dDest<=dLA?'celu':'odcinka do LA');
+    return {name:f.name,lat:f.lat,lng:f.lng,dist,where};
+  }).filter(f=>f.dist<350).sort((a,b)=>a.dist-b.dist).slice(0,40); }
 
   state.analysis={
     origin:o, destination:d,
@@ -394,6 +419,8 @@ async function loadAnalysis(){
     alerts:{ onRoute:dedupAlerts(onRouteAlerts), atDest:dedupAlerts(atDestAlerts), onward:dedupAlerts(onwardAlerts) },
     fires:{ route:fireRoute, dest:fireDest, onward:fireOnward, hasData:!!fireList },
     quakes:{ dest:quakeDest, max:quakeMax, near:quakeNear, hasData:!!quakeList },
+    geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:split.midName}:null },
+    mapFires,
     dataTime:new Date(),
   };
   state.loading=false; setBusy(false); renderAll();
@@ -508,14 +535,44 @@ function tile(elId,statusId,bodyId,color,statusTxt,html){
   const st=document.getElementById(statusId); st.textContent=statusTxt; st.className='text-xs '+TXT[color];
   document.getElementById(bodyId).innerHTML=html;
 }
+// Mapa: trasy + pinezki (start, nocleg, cel, LA, pożary, trzęsienia).
+function emojiIcon(e,size){ size=size||24; return L.divIcon({html:`<div class="emoji-pin">${e}</div>`,className:'',iconSize:[size,size],iconAnchor:[size/2,size/2]}); }
+function renderMap(A){
+  const wrap=document.getElementById('mapWrap');
+  if(typeof L==='undefined'||!A.geo){ wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  if(!_map){
+    _map=L.map('map',{zoomControl:true,attributionControl:false}).setView([34,-112],5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,subdomains:'abcd'}).addTo(_map);
+    _layer=L.layerGroup().addTo(_map);
+  }
+  _layer.clearLayers();
+  const g=A.geo, pts=[];
+  const line=(coords,color)=>{ if(!coords||coords.length<2)return; const ll=coords.map(c=>[c[1],c[0]]); ll.forEach(p=>pts.push(p)); L.polyline(ll,{color,weight:4,opacity:.9}).addTo(_layer); };
+  line(g.toDest,'#f59e0b'); line(g.toLA,'#60a5fa');
+  const mark=(lat,lng,e,label)=>{ if(lat==null)return; pts.push([lat,lng]); L.marker([lat,lng],{icon:emojiIcon(e,26)}).addTo(_layer).bindPopup(label); };
+  mark(g.origin.lat,g.origin.lng,'🟢','Start: '+(g.origin.name||''));
+  if(g.mid) mark(g.mid.lat,g.mid.lng,'🛏️','Nocleg (podział na 2 dni): '+(g.mid.name||''));
+  mark(g.dest.lat,g.dest.lng,'🎯','Cel: '+g.dest.name);
+  mark(g.LA.lat,g.LA.lng,'🌴','Los Angeles (cel końcowy)');
+  (A.mapFires||[]).forEach(f=>{ const col=f.dist<50?'#ef4444':f.dist<150?'#f59e0b':'#9ca3af'; pts.push([f.lat,f.lng]);
+    L.circleMarker([f.lat,f.lng],{radius:6,color:col,fillColor:col,fillOpacity:.85,weight:1}).addTo(_layer).bindPopup(`🔥 ${f.name}<br>${Math.round(f.dist)} km od ${f.where}`); });
+  ((A.quakes&&A.quakes.near)||[]).forEach(q=>{ pts.push([q.lat,q.lng]);
+    L.marker([q.lat,q.lng],{icon:emojiIcon('🌐',18)}).addTo(_layer).bindPopup(`Trzęsienie M${q.mag.toFixed(1)}<br>${q.place||''}`); });
+  if(pts.length){ try{ _map.fitBounds(L.latLngBounds(pts).pad(0.18)); }catch(e){} }
+  setTimeout(()=>{ try{_map.invalidateSize();}catch(e){} },200);
+  document.getElementById('mapLegend').innerHTML='🟠 dojazd · 🔵 do LA · 🔥 pożar · 🎯 cel';
+}
 function renderAll(){
   const A=state.analysis; if(!A){ renderVerdict(); return; }
   const V=renderVerdict();
-  ['legs','driveCard','tiles','sections'].forEach(id=>document.getElementById(id).classList.remove('hidden'));
+  ['mapWrap','legs','driveCard','tiles','sections'].forEach(id=>document.getElementById(id).classList.remove('hidden'));
 
-  legCard('leg1','🚗',`Dojazd do ${A.destination.name.split(',')[0]}`,V.leg1);
-  legCard('leg2','📍','Samo miejsce',V.leg2);
-  legCard('leg3','🌴','Dalej do LA',V.leg3);
+  renderMap(A);
+  const dn=A.destination.name.split(',')[0];
+  legCard('leg1','🚗',`Dojazd → ${dn}`,V.leg1);
+  legCard('leg2','📍',`Na miejscu (${dn})`,V.leg2);
+  legCard('leg3','🌴',`${dn} → LA`,V.leg3);
 
   // CZAS / PODZIAŁ
   let dt=`Jedzie się <b>${fmtH(A.drive.hours)}</b> (${Math.round(A.drive.km)} km)${A.drive.estimated?' — szacunek (OSRM niedostępny)':''}.`;
