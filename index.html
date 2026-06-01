@@ -283,7 +283,7 @@ async function nwsAlerts(lat,lng){
   const key=lat.toFixed(2)+','+lng.toFixed(2);
   try{
     const j=await fetchJSON(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lng.toFixed(4)}`,{headers:{'Accept':'application/geo+json'}});
-    const out=[]; (j.features||[]).forEach(f=>{ const ev=(f.properties&&f.properties.event)||''; if(ALERT_FILTER.some(rx=>rx.test(ev))) out.push({event:ev,severity:alertSeverity(ev)}); });
+    const out=[]; (j.features||[]).forEach(f=>{ const ev=(f.properties&&f.properties.event)||''; if(ALERT_FILTER.some(rx=>rx.test(ev))) out.push({event:ev,severity:alertSeverity(ev),id:f.id,geometry:f.geometry||null}); });
     cacheSet('al_'+key,out); return out;
   }catch(e){ state.errors.push(`Alerty ${key}: ${e.message}`); const c=cacheGet('al_'+key); return c?c.d:null; }
 }
@@ -298,6 +298,14 @@ async function fires(bbox){
     const out=(j.features||[]).map(f=>({name:(f.properties&&(f.properties.IncidentName||f.properties.incident_name))||'Pożar',lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]})).filter(f=>f.lat!=null);
     cacheSet('fires',out); return out;
   }catch(e){ state.errors.push('Pożary WFIGS: '+e.message); const c=cacheGet('fires'); return c?c.d:null; }
+}
+// Obrysy (perymetry) pożarów — poligony do narysowania na mapie.
+async function firePerims(bbox){
+  const url=`https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query`
+    +`?where=1%3D1&outFields=poly_IncidentName,IncidentName&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
+    +`&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=4326&f=geojson`;
+  try{ const j=await fetchJSON(url); cacheSet('perims',j); return j; }
+  catch(e){ state.errors.push('Pożary (obrysy): '+e.message); const c=cacheGet('perims'); return c?c.d:null; }
 }
 
 /* ---------------------------------------------------------------- TRZĘSIENIA USGS */
@@ -375,6 +383,8 @@ async function loadAnalysis(){
   [o,...wpDest,d,...wpLA,LA].forEach(addPt);
   const alertRes=await Promise.all(alertPts.map(p=>nwsAlerts(p.lat,p.lng).then(r=>({pt:p,r}))));
   const onRouteAlerts=[],atDestAlerts=[],onwardAlerts=[];
+  const mapAlerts=[],seenAl=new Set();
+  alertRes.forEach(({r})=>{ if(!r)return; r.forEach(al=>{ if(al.geometry&&al.id&&!seenAl.has(al.id)){ seenAl.add(al.id); mapAlerts.push(al);} }); });
   alertRes.forEach(({pt,r})=>{ if(!r)return; const dDest=haversine(pt.lat,pt.lng,d.lat,d.lng); const inLA=haversine(pt.lat,pt.lng,LA.lat,LA.lng);
     r.forEach(al=>{
       if(dDest<25) atDestAlerts.push(al);
@@ -386,7 +396,7 @@ async function loadAnalysis(){
   // 5) Pożary + trzęsienia w korytarzu.
   const corridor=[o,d,LA];
   const bbF=bboxOf(corridor,2.5), bbQ=bboxOf(corridor,2.0);
-  const [fireList,quakeList]=await Promise.all([fires(bbF),quakes(bbQ)]);
+  const [fireList,quakeList,perimList]=await Promise.all([fires(bbF),quakes(bbQ),firePerims(bbF)]);
   const nearestFire=(coords)=>{ if(!fireList||!fireList.length)return null; let b=null; fireList.forEach(f=>{const dist=distToPath(f.lat,f.lng,coords); if(!b||dist<b.dist)b={name:f.name,dist};}); return b; };
   const fireRoute=nearestFire(toDest.coords), fireOnward=nearestFire(toLA.coords);
   let fireDest=null; if(fireList) fireList.forEach(f=>{const dist=haversine(f.lat,f.lng,d.lat,d.lng); if(!fireDest||dist<fireDest.dist)fireDest={name:f.name,dist};});
@@ -420,7 +430,7 @@ async function loadAnalysis(){
     fires:{ route:fireRoute, dest:fireDest, onward:fireOnward, hasData:!!fireList },
     quakes:{ dest:quakeDest, max:quakeMax, near:quakeNear, hasData:!!quakeList },
     geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:split.midName}:null },
-    mapFires,
+    mapFires, mapAlerts, firePerims:perimList,
     dataTime:new Date(),
   };
   state.loading=false; setBusy(false); renderAll();
@@ -548,7 +558,14 @@ function renderMap(A){
   }
   _layer.clearLayers();
   const g=A.geo, pts=[];
-  const line=(coords,color)=>{ if(!coords||coords.length<2)return; const ll=coords.map(c=>[c[1],c[0]]); ll.forEach(p=>pts.push(p)); L.polyline(ll,{color,weight:4,opacity:.9}).addTo(_layer); };
+  // 1) OBSZARY (pod trasą): strefy ostrzeżeń pogodowych NWS + obrysy pożarów.
+  (A.mapAlerts||[]).forEach(al=>{ if(!al.geometry)return; const col=al.severity==='warning'?'#ef4444':'#eab308';
+    try{ L.geoJSON(al.geometry,{style:{color:col,weight:1,fillColor:col,fillOpacity:.18,dashArray:'4'}}).addTo(_layer).bindPopup(`⚠️ ${al.event}`); }catch(e){} });
+  if(A.firePerims&&A.firePerims.features&&A.firePerims.features.length){
+    try{ L.geoJSON(A.firePerims,{style:{color:'#f97316',weight:1.5,fillColor:'#ef4444',fillOpacity:.4},
+      onEachFeature:(f,l)=>{ const p=f.properties||{}; l.bindPopup('🔥 obszar pożaru: '+(p.poly_IncidentName||p.IncidentName||'')); }}).addTo(_layer); }catch(e){} }
+  // 2) TRASY (na wierzchu obszarów).
+  const line=(coords,color)=>{ if(!coords||coords.length<2)return; const ll=coords.map(c=>[c[1],c[0]]); ll.forEach(p=>pts.push(p)); L.polyline(ll,{color,weight:4,opacity:.95}).addTo(_layer); };
   line(g.toDest,'#f59e0b'); line(g.toLA,'#60a5fa');
   const mark=(lat,lng,e,label)=>{ if(lat==null)return; pts.push([lat,lng]); L.marker([lat,lng],{icon:emojiIcon(e,26)}).addTo(_layer).bindPopup(label); };
   mark(g.origin.lat,g.origin.lng,'🟢','Start: '+(g.origin.name||''));
@@ -561,7 +578,7 @@ function renderMap(A){
     L.marker([q.lat,q.lng],{icon:emojiIcon('🌐',18)}).addTo(_layer).bindPopup(`Trzęsienie M${q.mag.toFixed(1)}<br>${q.place||''}`); });
   if(pts.length){ try{ _map.fitBounds(L.latLngBounds(pts).pad(0.18)); }catch(e){} }
   setTimeout(()=>{ try{_map.invalidateSize();}catch(e){} },200);
-  document.getElementById('mapLegend').innerHTML='🟠 dojazd · 🔵 do LA · 🔥 pożar · 🎯 cel';
+  document.getElementById('mapLegend').innerHTML='🟠 dojazd · 🔵 do LA · 🟥 obszar pożaru · ▦ ostrzeżenie pogody';
 }
 function renderAll(){
   const A=state.analysis; if(!A){ renderVerdict(); return; }
