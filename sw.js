@@ -3,7 +3,7 @@
    są dostępne jako fallback. Surowe dane API cache'uje też sama aplikacja
    w localStorage (z timestampem) — tu trzymamy powłokę i kopię odpowiedzi. */
 
-const CACHE = 'roadtrip-v4';
+const CACHE = 'roadtrip-v5';
 const SHELL = [
   './',
   './index.html',

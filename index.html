@@ -271,9 +271,10 @@ function periodAt(periods,when){
   periods.forEach(p=>{ const d=Math.abs(new Date(p.startTime).getTime()-t); if(d<bestd){bestd=d;best=p;} });
   const tempC=best.temperatureUnit==='F'?F2C(best.temperature):best.temperature;
   const wm=String(best.windSpeed||'').match(/(\d+)/); const windKmh=wm?MI2KM(+wm[1]):0;
+  const wg=String(best.windGust||'').match(/(\d+)/); const gustKmh=wg?MI2KM(+wg[1]):0;
   const precip=(best.probabilityOfPrecipitation&&best.probabilityOfPrecipitation.value)||0;
   const sf=(best.shortForecast||'');
-  return { tempC, windKmh, precip, short:sf, hasStorm:/thunder|storm|tstorm/i.test(sf), when:new Date(best.startTime) };
+  return { tempC, windKmh, gustKmh, precip, short:sf, hasStorm:/thunder|storm|tstorm/i.test(sf), when:new Date(best.startTime) };
 }
 
 /* ---------------------------------------------------------------- NWS ALERTY */
@@ -291,11 +292,14 @@ async function nwsAlerts(lat,lng){
 /* ---------------------------------------------------------------- POŻARY WFIGS */
 async function fires(bbox){
   const url=`https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Incident_Locations_Current/FeatureServer/0/query`
-    +`?where=1%3D1&outFields=IncidentName,IncidentSize&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
+    +`?where=1%3D1&outFields=IncidentName,IncidentSize,PercentContained,FireDiscoveryDateTime&geometry=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}`
     +`&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=4326&f=geojson`;
   try{
     const j=await fetchJSON(url);
-    const out=(j.features||[]).map(f=>({name:(f.properties&&(f.properties.IncidentName||f.properties.incident_name))||'Pożar',lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]})).filter(f=>f.lat!=null);
+    const out=(j.features||[]).map(f=>{ const p=f.properties||{};
+      return {name:p.IncidentName||p.incident_name||'Pożar', size:p.IncidentSize!=null?+p.IncidentSize:null,
+        contained:p.PercentContained!=null?+p.PercentContained:null, discovered:p.FireDiscoveryDateTime||null,
+        lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0]}; }).filter(f=>f.lat!=null);
     cacheSet('fires',out); return out;
   }catch(e){ state.errors.push('Pożary WFIGS: '+e.message); const c=cacheGet('fires'); return c?c.d:null; }
 }
@@ -306,6 +310,23 @@ async function firePerims(bbox){
     +`&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=4326&f=geojson`;
   try{ const j=await fetchJSON(url); cacheSet('perims',j); return j; }
   catch(e){ state.errors.push('Pożary (obrysy): '+e.message); const c=cacheGet('perims'); return c?c.d:null; }
+}
+
+/* ---------------------------------------------------------------- KEMPINGI (OSM) */
+// Jedziemy kamperem — szukamy camp_site / caravan_site (NIE moteli).
+async function findCampground(lat,lng){
+  const q=`[out:json][timeout:8];(nwr["tourism"="caravan_site"](around:35000,${lat},${lng});nwr["tourism"="camp_site"](around:35000,${lat},${lng}););out center tags 40;`;
+  try{
+    const j=await fetchJSON('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q));
+    const els=(j.elements||[]).map(e=>{ const la=e.lat!=null?e.lat:(e.center&&e.center.lat), ln=e.lon!=null?e.lon:(e.center&&e.center.lon);
+      if(la==null) return null; const t=e.tags||{};
+      return { name:t.name||(t.tourism==='caravan_site'?'Park RV (bez nazwy)':'Kemping (bez nazwy)'),
+        rv:t.tourism==='caravan_site', named:!!t.name, lat:la, lng:ln, dist:haversine(lat,lng,la,ln) }; })
+      .filter(Boolean).filter(e=>e.dist<40);
+    // preferuj nazwane i RV-friendly, potem najbliższe
+    els.sort((a,b)=> (b.named-a.named) || (b.rv-a.rv) || (a.dist-b.dist));
+    return els.length? {best:els[0], more:els.filter(e=>e.named).slice(0,4)} : null;
+  }catch(e){ state.errors.push('Kempingi OSM: '+e.message); return null; }
 }
 
 /* ---------------------------------------------------------------- TRZĘSIENIA USGS */
@@ -397,39 +418,47 @@ async function loadAnalysis(){
   const corridor=[o,d,LA];
   const bbF=bboxOf(corridor,2.5), bbQ=bboxOf(corridor,2.0);
   const [fireList,quakeList,perimList]=await Promise.all([fires(bbF),quakes(bbQ),firePerims(bbF)]);
-  const nearestFire=(coords)=>{ if(!fireList||!fireList.length)return null; let b=null; fireList.forEach(f=>{const dist=distToPath(f.lat,f.lng,coords); if(!b||dist<b.dist)b={name:f.name,dist};}); return b; };
-  const fireRoute=nearestFire(toDest.coords), fireOnward=nearestFire(toLA.coords);
-  let fireDest=null; if(fireList) fireList.forEach(f=>{const dist=haversine(f.lat,f.lng,d.lat,d.lng); if(!fireDest||dist<fireDest.dist)fireDest={name:f.name,dist};});
+  // Wybór najbardziej ISTOTNEGO pożaru dla odcinka (wg ryzyka, nie tylko dystansu).
+  const pickFire=(distFn)=>{ if(!fireList)return null; let best=null;
+    fireList.forEach(f=>{ const dist=distFn(f); const tier=fireTier(dist,f.size,f.contained);
+      const cand={name:f.name,dist,size:f.size,contained:f.contained,tier};
+      if(!best||cand.tier>best.tier||(cand.tier===best.tier&&cand.dist<best.dist)) best=cand; });
+    return best; };
+  const fireRoute=pickFire(f=>distToPath(f.lat,f.lng,toDest.coords));
+  const fireOnward=pickFire(f=>distToPath(f.lat,f.lng,toLA.coords));
+  const fireDest=pickFire(f=>haversine(f.lat,f.lng,d.lat,d.lng));
   let quakeDest=null,quakeMax=0; const quakeNear=[];
   if(quakeList) quakeList.forEach(q=>{ const dist=haversine(q.lat,q.lng,d.lat,d.lng); if(dist<200){quakeNear.push({...q,dist}); if(q.mag>quakeMax)quakeMax=q.mag; if(!quakeDest||dist<quakeDest.dist)quakeDest={mag:q.mag,dist,place:q.place,time:q.time};} });
 
-  // 6) Podział na dni.
+  // 6) Podział na dni + KEMPINGI (kamper, nie motele).
   let split=null;
+  const destCamp=await findCampground(d.lat,d.lng);
   if(toDest.hours>MAX_DAILY_DRIVE_H){
     const mid=pointAtHours(toDest.coords,toDest.hours,MAX_DAILY_DRIVE_H);
-    const midName=await reverseName(mid.lat,mid.lng);
-    split={ needed:true, day1H:Math.min(MAX_DAILY_DRIVE_H,toDest.hours), day2H:toDest.hours-MAX_DAILY_DRIVE_H, midName, lat:mid.lat, lng:mid.lng };
+    const camp=await findCampground(mid.lat,mid.lng);
+    split={ needed:true, day1H:Math.min(MAX_DAILY_DRIVE_H,toDest.hours), day2H:toDest.hours-MAX_DAILY_DRIVE_H,
+            lat:(camp&&camp.best?camp.best.lat:mid.lat), lng:(camp&&camp.best?camp.best.lng:mid.lng), camp };
   }
 
-  // 7) Pożary do naniesienia na mapę (z dystansem do najbliższego elementu).
+  // 7) Pożary na mapę (z dystansem, rozmiarem, opanowaniem i poziomem ryzyka).
   let mapFires=[];
   if(fireList){ mapFires=fireList.map(f=>{
     const dRoute=distToPath(f.lat,f.lng,toDest.coords), dLA=distToPath(f.lat,f.lng,toLA.coords), dDest=haversine(f.lat,f.lng,d.lat,d.lng);
     const dist=Math.min(dRoute,dLA,dDest);
     const where=(dRoute<=dLA&&dRoute<=dDest)?'trasy dojazdu':(dDest<=dLA?'celu':'odcinka do LA');
-    return {name:f.name,lat:f.lat,lng:f.lng,dist,where};
-  }).filter(f=>f.dist<350).sort((a,b)=>a.dist-b.dist).slice(0,40); }
+    return {name:f.name,lat:f.lat,lng:f.lng,dist,where,size:f.size,contained:f.contained,tier:fireTier(dist,f.size,f.contained)};
+  }).filter(f=>f.dist<350).sort((a,b)=>(b.tier-a.tier)||(a.dist-b.dist)).slice(0,40); }
 
   state.analysis={
     origin:o, destination:d,
-    drive:{ hours:toDest.hours, km:toDest.km, estimated:toDest.estimated, arrETA, split,
+    drive:{ hours:toDest.hours, km:toDest.km, estimated:toDest.estimated, arrETA, split, destCamp,
             departNow:now, optimal:optimalDeparture(toDest.hours) },
     onward:{ hours:toLA.hours, km:toLA.km, estimated:toLA.estimated },
     routeWeather, destArrival, overnightMin, laWeather,
     alerts:{ onRoute:dedupAlerts(onRouteAlerts), atDest:dedupAlerts(atDestAlerts), onward:dedupAlerts(onwardAlerts) },
     fires:{ route:fireRoute, dest:fireDest, onward:fireOnward, hasData:!!fireList },
     quakes:{ dest:quakeDest, max:quakeMax, near:quakeNear, hasData:!!quakeList },
-    geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:split.midName}:null },
+    geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:(split.camp&&split.camp.best?split.camp.best.name:'punkt ~6h trasy')}:null },
     mapFires, mapAlerts, firePerims:perimList,
     dataTime:new Date(),
   };
@@ -442,6 +471,24 @@ function optimalDeparture(h){ if(!h)return null; let dep=12-h-0.5; if(dep<MIN_DE
 function rank(c){ return {green:1,yellow:2,red:3}[c]; }
 function worst(a,b){ return rank(a)>=rank(b)?a:b; }
 
+// Poziom ryzyka pożaru: uwzględnia ROZMIAR i OPANOWANIE, nie tylko dystans.
+// Mały, opanowany pożar 20 km od trasy = brak ryzyka (tier 0).
+function fireTier(dist,size,contained){
+  const acres=size||0;
+  const active=(contained==null)||contained<90;   // opanowany >90% pomijamy
+  if(!active) return 0;
+  if(dist<8) return 3;                              // praktycznie na drodze
+  if(acres>=1000 && dist<80) return 3;             // duży i blisko
+  if(acres>=300  && dist<40) return 3;
+  if(acres>=1000 && dist<150) return 2;
+  if(acres>=300  && dist<100) return 2;
+  if(acres>=50   && dist<40)  return 2;
+  if(acres>=20   && dist<15)  return 2;            // mały, ale tuż przy trasie
+  return 0;                                         // reszta: informacyjnie, bez alarmu
+}
+function fmtAcres(a){ if(a==null)return ''; return a>=1000?`${(a/1000).toFixed(1)}k ac`:`${Math.round(a)} ac`; }
+function fireLabel(f){ return `Pożar „${f.name}" ${Math.round(f.dist)} km${f.size!=null?', '+fmtAcres(f.size):''}${f.contained!=null?`, ${Math.round(f.contained)}% opan.`:''}`; }
+
 // Ocena nogi: zwraca {color, reasons[]}. Konserwatywnie.
 function assessLeg(opts){
   const r={color:'green',reasons:[]};
@@ -453,13 +500,18 @@ function assessLeg(opts){
     if(w.missing) return;
     if(w.tempC!=null && w.tempC>43){esc('red');r.reasons.push(`Skrajny upał ${Math.round(w.tempC)}°C${w.where?' ('+w.where+')':''}`);}
     else if(w.tempC!=null && w.tempC>37){esc('yellow');r.reasons.push(`Upał ${Math.round(w.tempC)}°C${w.where?' ('+w.where+')':''}`);}
-    if(w.windKmh>65){esc('red');r.reasons.push(`Bardzo silny wiatr ${Math.round(w.windKmh)} km/h`);}
-    else if(w.windKmh>40){esc('yellow');r.reasons.push(`Wiatr ${Math.round(w.windKmh)} km/h`);}
-    if(w.hasStorm||w.precip>=60){esc('yellow');r.reasons.push(`Burze/opady${w.precip?` ${w.precip}%`:''}`);}
+    // WIATR — progi zaostrzone dla wysokiego kampera (porywy groźne dla burty).
+    const sus=w.windKmh||0, gust=w.gustKmh||0, wmax=Math.max(sus,gust);
+    if(sus>65||gust>80){esc('red');r.reasons.push(`Silny wiatr ${Math.round(wmax)} km/h — groźny dla wysokiego kampera`);}
+    else if(sus>45||gust>55){esc('yellow');r.reasons.push(`Wiatr ${Math.round(wmax)} km/h${gust>sus+15?' (porywy)':''} — uwaga, kamper`);}
+    // BURZE / OPADY
+    if(w.hasStorm){esc('yellow');r.reasons.push(`Burze${w.precip?` (${w.precip}% opadów)`:''}`);}
+    else if(w.precip>=60){esc('yellow');r.reasons.push(`Intensywne opady ${w.precip}%`);}
   });
-  // pożar
-  if(opts.fire){ if(opts.fire.dist<50){esc('red');r.reasons.push(`Pożar „${opts.fire.name}" ${Math.round(opts.fire.dist)} km`);}
-    else if(opts.fire.dist<150){esc('yellow');r.reasons.push(`Pożar „${opts.fire.name}" ${Math.round(opts.fire.dist)} km — monitoruj`);} }
+  // pożar (wg poziomu ryzyka)
+  if(opts.fire){ const t=opts.fire.tier!=null?opts.fire.tier:0;
+    if(t>=3){esc('red');r.reasons.push(fireLabel(opts.fire));}
+    else if(t>=2){esc('yellow');r.reasons.push(fireLabel(opts.fire)+' — monitoruj');} }
   // trzęsienia
   if(opts.quake){ if(opts.quake.mag>=6&&opts.quake.dist<200){esc('red');r.reasons.push(`Trzęsienie M${opts.quake.mag.toFixed(1)} ${Math.round(opts.quake.dist)} km`);}
     else if(opts.quake.mag>=4.5&&opts.quake.dist<150){esc('yellow');r.reasons.push(`Niedawne trzęsienie M${opts.quake.mag.toFixed(1)} ${Math.round(opts.quake.dist)} km`);} }
@@ -473,13 +525,13 @@ function computeVerdict(A){
   const noAny = noWx && A.alerts.onRoute.length===0 && A.alerts.atDest.length===0 && !A.fires.hasData && !A.quakes.hasData;
 
   // NOGA 1 — DOJAZD
-  const rw=A.routeWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,precip:w.precip,hasStorm:w.hasStorm}));
+  const rw=A.routeWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,gustKmh:w.gustKmh,precip:w.precip,hasStorm:w.hasStorm}));
   const leg1=assessLeg({alerts:A.alerts.onRoute, weather:rw, fire:A.fires.route});
   // NOGA 2 — MIEJSCE
-  const destWx=[]; if(A.destArrival) destWx.push({tempC:A.destArrival.tempC,windKmh:A.destArrival.windKmh,precip:A.destArrival.precip,hasStorm:A.destArrival.hasStorm,where:A.destination.name.split(',')[0]});
+  const destWx=[]; if(A.destArrival) destWx.push({tempC:A.destArrival.tempC,windKmh:A.destArrival.windKmh,gustKmh:A.destArrival.gustKmh,precip:A.destArrival.precip,hasStorm:A.destArrival.hasStorm,where:A.destination.name.split(',')[0]});
   const leg2=assessLeg({alerts:A.alerts.atDest, weather:destWx, fire:A.fires.dest, quake:A.quakes.dest});
   // NOGA 3 — DALEJ DO LA
-  const laWx=A.laWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,precip:w.precip,hasStorm:w.hasStorm}));
+  const laWx=A.laWeather.filter(w=>!w.missing).map(w=>({tempC:w.tempC,windKmh:w.windKmh,gustKmh:w.gustKmh,precip:w.precip,hasStorm:w.hasStorm}));
   const leg3=assessLeg({alerts:A.alerts.onward, weather:laWx, fire:A.fires.onward});
 
   let overallColor=worst(worst(leg1.color,leg2.color),leg3.color);
@@ -572,8 +624,9 @@ function renderMap(A){
   if(g.mid) mark(g.mid.lat,g.mid.lng,'🛏️','Nocleg (podział na 2 dni): '+(g.mid.name||''));
   mark(g.dest.lat,g.dest.lng,'🎯','Cel: '+g.dest.name);
   mark(g.LA.lat,g.LA.lng,'🌴','Los Angeles (cel końcowy)');
-  (A.mapFires||[]).forEach(f=>{ const col=f.dist<50?'#ef4444':f.dist<150?'#f59e0b':'#9ca3af'; pts.push([f.lat,f.lng]);
-    L.circleMarker([f.lat,f.lng],{radius:6,color:col,fillColor:col,fillOpacity:.85,weight:1}).addTo(_layer).bindPopup(`🔥 ${f.name}<br>${Math.round(f.dist)} km od ${f.where}`); });
+  (A.mapFires||[]).forEach(f=>{ const col=(f.tier>=3)?'#ef4444':(f.tier>=2)?'#f59e0b':'#9ca3af'; const rad=f.tier>=2?7:5; pts.push([f.lat,f.lng]);
+    const info=`🔥 ${f.name}<br>${Math.round(f.dist)} km od ${f.where}${f.size!=null?'<br>'+fmtAcres(f.size):''}${f.contained!=null?` • ${Math.round(f.contained)}% opanowany`:''}${(f.tier||0)===0?'<br><i>bez ryzyka dla trasy</i>':''}`;
+    L.circleMarker([f.lat,f.lng],{radius:rad,color:col,fillColor:col,fillOpacity:.85,weight:1}).addTo(_layer).bindPopup(info); });
   ((A.quakes&&A.quakes.near)||[]).forEach(q=>{ pts.push([q.lat,q.lng]);
     L.marker([q.lat,q.lng],{icon:emojiIcon('🌐',18)}).addTo(_layer).bindPopup(`Trzęsienie M${q.mag.toFixed(1)}<br>${q.place||''}`); });
   if(pts.length){ try{ _map.fitBounds(L.latLngBounds(pts).pad(0.18)); }catch(e){} }
@@ -591,26 +644,37 @@ function renderAll(){
   legCard('leg2','📍',`Na miejscu (${dn})`,V.leg2);
   legCard('leg3','🌴',`${dn} → LA`,V.leg3);
 
-  // CZAS / PODZIAŁ
+  // CZAS / PODZIAŁ / KEMPINGI
+  const campLine=(c)=> c&&c.best ? `🏕️ ${c.best.name}${c.best.rv?' (RV)':''} (~${Math.round(c.best.dist)} km)` : '🏕️ brak kempingu w pobliżu — sprawdź ręcznie';
   let dt=`Jedzie się <b>${fmtH(A.drive.hours)}</b> (${Math.round(A.drive.km)} km)${A.drive.estimated?' — szacunek (OSRM niedostępny)':''}.`;
   dt+=` Wyjazd teraz → dojazd ~${fmtHourDate(A.drive.arrETA)}.`;
   if(A.drive.split){ dt+=`<div class="mt-2 text-amber-300">⚠️ Za długo na 1 dzień. Podziel na 2 dni:</div>`
-    +`<div>• Dzień 1: ~${fmtH(A.drive.split.day1H)} do <b>${A.drive.split.midName}</b> (nocleg)</div>`
-    +`<div>• Dzień 2: ~${fmtH(A.drive.split.day2H)} do ${A.destination.name.split(',')[0]}</div>`; }
+    +`<div>• Dzień 1: ~${fmtH(A.drive.split.day1H)} → nocleg: ${campLine(A.drive.split.camp)}</div>`
+    +`<div>• Dzień 2: ~${fmtH(A.drive.split.day2H)} do ${A.destination.name.split(',')[0]}</div>`;
+    if(A.drive.split.camp&&A.drive.split.camp.more&&A.drive.split.camp.more.length>1)
+      dt+=`<div class="text-gray-500 text-[11px]">Inne kempingi po drodze: ${A.drive.split.camp.more.slice(1,4).map(c=>c.name).join(' • ')}</div>`;
+  }
   else { dt+=` Mieści się w 1 dniu (komfort ≤${MAX_DAILY_DRIVE_H}h).`; }
-  dt+=`<div class="mt-2 text-gray-400">Dalej do LA: ${fmtH(A.onward.hours)} (${Math.round(A.onward.km)} km).</div>`;
+  dt+=`<div class="mt-2">Nocleg przy celu: ${campLine(A.drive.destCamp)}</div>`;
+  dt+=`<div class="mt-1 text-gray-400">Dalej do LA: ${fmtH(A.onward.hours)} (${Math.round(A.onward.km)} km).</div>`;
   document.getElementById('driveBody').innerHTML=dt;
 
-  // POGODA
-  let wColor='gray',wRows=[],hottest=null;
+  // POGODA (temp + wiatr/porywy + burze na każdym punkcie)
+  let wColor='gray',wRows=[],hottest=null,windiest=0;
   A.routeWeather.forEach((w,i)=>{
     if(w.missing){wRows.push(`<div>Punkt ${i+1}: <span class="text-gray-500">brak</span></div>`);return;}
-    const t=Math.round(w.tempC); let c=t<30?'green':t<=37?'yellow':'red'; if(w.hasStorm&&c==='green')c='yellow';
-    wColor=worst(wColor==='gray'?'green':wColor,c); if(hottest==null||w.tempC>hottest)hottest=w.tempC;
-    wRows.push(`<div>${i===0?'Start':i===A.routeWeather.length-1?'Cel':'Trasa '+i} (~${fmtHourDate(w.eta)}): <b>${t}°C</b>, ${w.short}${w.precip?` ☔${w.precip}%`:''}${w.windKmh>40?` 💨${Math.round(w.windKmh)}`:''}</div>`);
+    const t=Math.round(w.tempC); const gust=w.gustKmh||0, sus=w.windKmh||0, wmax=Math.max(sus,gust);
+    let c=t<30?'green':t<=37?'yellow':'red';
+    if(w.hasStorm&&c==='green')c='yellow';
+    if((sus>45||gust>55)&&c==='green')c='yellow'; if(sus>65||gust>80)c='red';
+    wColor=worst(wColor==='gray'?'green':wColor,c); if(hottest==null||w.tempC>hottest)hottest=w.tempC; if(wmax>windiest)windiest=wmax;
+    const windTxt = wmax>=20 ? ` 💨${Math.round(sus)}${gust>sus+10?`/${Math.round(gust)}⤴`:''} km/h` : '';
+    const stormTxt = w.hasStorm ? ' ⛈️burza' : '';
+    wRows.push(`<div>${i===0?'Start':i===A.routeWeather.length-1?'Cel':'Trasa '+i} (~${fmtHourDate(w.eta)}): <b>${t}°C</b>, ${w.short}${w.precip?` ☔${w.precip}%`:''}${windTxt}${stormTxt}</div>`);
   });
-  if(A.overnightMin!=null) wRows.push(`<div class="text-gray-400 mt-1">Noc w celu min ~${Math.round(A.overnightMin)}°C</div>`);
-  tile('tileWeather','wStatus','wBody',wColor==='gray'?'gray':wColor,hottest!=null?`${Math.round(hottest)}°C`:'—',wRows.join('')||'<span class="text-gray-500">Brak danych.</span>');
+  wRows.push(`<div class="text-gray-500 mt-1">💨 = wiatr stały/porywy. Progi dla kampera: żółty &gt;45, czerwony &gt;65 km/h.</div>`);
+  if(A.overnightMin!=null) wRows.push(`<div class="text-gray-400">Noc w celu min ~${Math.round(A.overnightMin)}°C</div>`);
+  tile('tileWeather','wStatus','wBody',wColor==='gray'?'gray':wColor,hottest!=null?`${Math.round(hottest)}°C${windiest>=45?' 💨':''}`:'—',wRows.join('')||'<span class="text-gray-500">Brak danych.</span>');
 
   // ALERTY
   const allAl=[['Trasa',A.alerts.onRoute],['Cel',A.alerts.atDest],['Do LA',A.alerts.onward]];
@@ -620,16 +684,22 @@ function renderAll(){
   if(!aHas){ aRows=['<span class="text-green-400">Brak alertów na trasie, w celu i dalej.</span>']; aColor='green'; }
   tile('tileAlerts','aStatus','aBody',aColor,aWorst,aRows.join(''));
 
-  // POŻARY
-  let fRows=[],fColor='gray';
+  // POŻARY (ryzyko = dystans + rozmiar + opanowanie, nie sam dystans)
+  let fRows=[],fColor='gray',maxTier=0;
   if(!A.fires.hasData){ fRows=['<span class="text-gray-500">Brak danych.</span>']; }
   else{
-    const items=[['Trasa',A.fires.route],['Cel',A.fires.dest],['Do LA',A.fires.onward]];
-    let minD=Infinity; items.forEach(([lbl,f])=>{ if(!f)return; minD=Math.min(minD,f.dist); const c=f.dist<100?'red':f.dist<250?'yellow':'green'; fRows.push(`<div class="${c==='green'?'':TXT[c]}">${lbl}: „${f.name}" ${Math.round(f.dist)} km</div>`); });
-    if(!fRows.length||minD===Infinity){fRows=['<span class="text-green-400">Brak pożarów w pobliżu (250 km).</span>'];fColor='green';}
-    else fColor=minD<100?'red':minD<250?'yellow':'green';
+    const tierC=t=>t>=3?'red':t>=2?'yellow':'green';
+    const items=[['Dojazd',A.fires.route],['Cel',A.fires.dest],['Do LA',A.fires.onward]];
+    const seen=new Set();
+    items.forEach(([lbl,f])=>{ if(!f||seen.has(f.name+f.dist))return; seen.add(f.name+f.dist);
+      maxTier=Math.max(maxTier,f.tier||0); const c=tierC(f.tier||0);
+      const meta=`${Math.round(f.dist)} km${f.size!=null?', '+fmtAcres(f.size):''}${f.contained!=null?`, ${Math.round(f.contained)}% opan.`:''}`;
+      const note=(f.tier||0)===0?' <span class="text-gray-500">(bez ryzyka dla trasy)</span>':'';
+      fRows.push(`<div class="${c==='green'?'text-gray-300':TXT[c]}">${lbl}: „${f.name}" ${meta}${note}</div>`); });
+    if(!fRows.length){fRows=['<span class="text-green-400">Brak pożarów w pobliżu (250 km).</span>'];}
+    fColor=maxTier>=3?'red':maxTier>=2?'yellow':'green';
   }
-  tile('tileFire','fStatus','fBody',fColor==='gray'?'gray':fColor,fColor==='red'?'BLISKO':fColor==='yellow'?'monitoruj':(A.fires.hasData?'brak':'—'),fRows.join(''));
+  tile('tileFire','fStatus','fBody',fColor==='gray'?'gray':fColor,maxTier>=3?'RYZYKO':maxTier>=2?'monitoruj':(A.fires.hasData?'OK':'—'),fRows.join(''));
 
   // TRZĘSIENIA
   let qRows=[],qColor='gray';
@@ -642,10 +712,12 @@ function renderAll(){
   }
   tile('tileQuake','qStatus','qBody',qColor==='gray'?'gray':qColor,A.quakes.hasData?`M${(A.quakes.max||0).toFixed(1)}`:'—',qRows.join(''));
 
-  // TIMELINE
+  // TIMELINE (temp + wiatr/porywy + burza wg ETA)
   document.getElementById('timelineBody').innerHTML = A.routeWeather.map((w,i)=>{
     if(w.missing) return `<div class="text-gray-500">${i===0?'Start':i===A.routeWeather.length-1?'Cel':'Trasa '+i}: brak prognozy</div>`;
-    return `<div class="flex justify-between"><span>${i===0?'Start':i===A.routeWeather.length-1?'Cel':'~'+Math.round((w.frac||0)*100)+'%'} • ${fmtHourDate(w.eta)}</span><span><b>${Math.round(w.tempC)}°C</b> ${w.short}${w.precip?` ☔${w.precip}%`:''}</span></div>`;
+    const gust=w.gustKmh||0,sus=w.windKmh||0,wmax=Math.max(sus,gust);
+    const wind=wmax>=20?` 💨${Math.round(sus)}${gust>sus+10?'/'+Math.round(gust)+'⤴':''}`:'';
+    return `<div class="flex justify-between gap-2"><span class="text-gray-400 shrink-0">${i===0?'Start':i===A.routeWeather.length-1?'Cel':'~'+Math.round((w.frac||0)*100)+'%'} • ${fmtHourDate(w.eta)}</span><span class="text-right"><b>${Math.round(w.tempC)}°C</b> ${w.short}${w.precip?` ☔${w.precip}%`:''}${wind}${w.hasStorm?' ⛈️':''}</span></div>`;
   }).join('');
 
   // DROGI (ręcznie)
@@ -668,7 +740,8 @@ function renderSources(){
   L.push(`<div><b>Geokoder:</b> Photon/Nominatim (OSM)</div>`);
   L.push(`<div><b>Trasa/czas:</b> OSRM${A&&A.drive.estimated?' (fallback: szacunek)':''}</div>`);
   L.push(`<div><b>Pogoda/alerty:</b> api.weather.gov (NWS)</div>`);
-  L.push(`<div><b>Pożary:</b> WFIGS ArcGIS • <b>Trzęsienia:</b> USGS</div>`);
+  L.push(`<div><b>Pożary:</b> WFIGS (rozmiar, % opanowania + obrysy) • <b>Trzęsienia:</b> USGS</div>`);
+  L.push(`<div><b>Kempingi:</b> OpenStreetMap / Overpass (camp_site, caravan_site)</div>`);
   if(state.errors.length) L.push(`<div class="mt-2 text-amber-400"><b>Błędy/odmowy (${state.errors.length}):</b><br>${state.errors.slice(-10).join('<br>')}</div>`);
   L.push(`<div class="mt-2 text-gray-500">Wszystkie źródła darmowe, bez kluczy.</div>`);
   el.innerHTML=L.join('');
@@ -714,7 +787,7 @@ renderRecent();
 locate(false);
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
-window.__rt={state,computeVerdict,assessLeg,haversine,geocode,routeOSRM,loadAnalysis};
+window.__rt={state,computeVerdict,assessLeg,haversine,geocode,routeOSRM,loadAnalysis,fireTier};
 </script>
 </body>
 </html>
