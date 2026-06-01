@@ -49,7 +49,8 @@ ziemi — osobno dla **dojazdu**, **miejsca** i **odcinka dalej do LA**.
 | Alerty            | `api.weather.gov/alerts/active`                               |
 | Pożary            | WFIGS ArcGIS (incydenty aktywne)                              |
 | Trzęsienia        | USGS FDSN (M≥3, ostatnie 7 dni)                               |
-| Zamknięcia dróg   | brak darmowego API z CORS → linki do 511 (ręcznie)           |
+| Zamknięcia dróg   | alerty NWS (high wind/flood/dust…) automatycznie; pełne zamknięcia → opcjonalny proxy (niżej) + linki 511 |
+| Kempingi          | OpenStreetMap / Overpass (`camp_site`, `caravan_site`)        |
 
 ### Niezawodność / offline
 Każdy fetch ma **timeout 8 s + try/catch** — apka nigdy się nie wywala. Ostatnie
@@ -157,6 +158,36 @@ HTTP→HTTPS. Po tym otwórz `https://roadtrip.twojadomena.pl` w Safari.
 > Wireless Emergency Alerts**.
 
 ---
+
+## Automatyczne zamknięcia dróg (Cloudflare Worker)
+
+Kafel **Drogi** już teraz, **bez żadnej konfiguracji**, pokazuje alerty NWS,
+które zwykle oznaczają utrudnienia (High Wind, Dust Storm, Flood, Winter Storm,
+Tornado) i wlicza je do werdyktu.
+
+Po **pełne zamknięcia/zdarzenia** (np. Caltrans w Kalifornii) potrzebny jest
+malutki darmowy proxy omijający CORS. Nie wymaga VPS ani karty. Kod jest w
+pliku **`cloudflare-worker.js`**.
+
+**Krok po kroku (można z telefonu, w przeglądarce):**
+
+1. Wejdź na **dash.cloudflare.com** → załóż darmowe konto (lub zaloguj).
+2. Menu **Workers & Pages** → **Create application** → **Create Worker**.
+3. Nadaj nazwę (np. `roadtrip-proxy`) → **Deploy**.
+4. **Edit code** → skasuj domyślny kod → wklej całą zawartość
+   `cloudflare-worker.js` z tego repo → **Deploy**.
+5. Skopiuj adres Workera, np. `https://roadtrip-proxy.twojekonto.workers.dev`.
+6. W aplikacji otwórz sekcję **🚧 Drogi** → **⚙️ Automatyczne zamknięcia** →
+   wklej ten adres → **Zapisz i sprawdź**.
+
+Od teraz przy każdym wyszukaniu apka pobiera zdarzenia Caltrans w pobliżu trasy
+(odcinek w Kalifornii) i pokazuje je w kaflu Drogi. Adres zapisuje się w
+`localStorage`. Proxy przepuszcza tylko dozwolone hosty (lista `ALLOW` w pliku
+Workera) — nie jest otwartym relayem.
+
+> Uwaga: niezawodnie działa **Kalifornia** (Caltrans, bez klucza). Teksas, Nowy
+> Meksyk i Arizona często wymagają darmowego tokenu API — wtedy trzeba go dodać
+> do zapytania w `cloudflare-worker.js` (host już jest na liście ALLOW).
 
 ## Konfiguracja (na górze `<script>` w `index.html`)
 

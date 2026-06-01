@@ -341,6 +341,39 @@ async function quakes(bbox){
   }catch(e){ state.errors.push('Trzęsienia USGS: '+e.message); const c=cacheGet('quakes'); return c?c.d:null; }
 }
 
+/* ---------------------------------------------------------------- DROGI (opcjonalny proxy) */
+// Zamknięcia/zdarzenia drogowe wymagają proxy (CORS). Generyczny ekstraktor
+// wyłuskuje punkty {lat,lng,desc} z dowolnego JSON/GeoJSON feedu stanu.
+function extractGeoItems(obj,out,depth){
+  if(depth>7||!obj||typeof obj!=='object'||out.length>800) return;
+  if(obj.type==='Feature'&&obj.geometry&&obj.geometry.type==='Point'&&Array.isArray(obj.geometry.coordinates)){
+    const c=obj.geometry.coordinates,p=obj.properties||{};
+    if(typeof c[1]==='number'&&typeof c[0]==='number') out.push({lat:c[1],lng:c[0],desc:p.description||p.name||p.location||p.detail||p.status||p.headline||'zdarzenie drogowe'});
+  }
+  if(Array.isArray(obj)){ for(const x of obj) extractGeoItems(x,out,depth+1); return; }
+  let lat=null,lng=null,desc=null;
+  for(const k in obj){ const v=obj[k],kl=k.toLowerCase();
+    if(typeof v==='number'){ if(/lat/.test(kl)&&Math.abs(v)<=90&&lat==null)lat=v; else if(/(lon|lng)/.test(kl)&&Math.abs(v)>1&&Math.abs(v)<=180&&lng==null)lng=v; }
+    else if(typeof v==='string'&&v.length>5&&!desc&&/desc|name|location|detail|closure|event|status|message|headline/.test(kl))desc=v;
+  }
+  if(lat!=null&&lng!=null) out.push({lat,lng,desc:desc||'zdarzenie drogowe'});
+  for(const k in obj){ if(obj[k]&&typeof obj[k]==='object') extractGeoItems(obj[k],out,depth+1); }
+}
+async function fetchRoadEvents(proxy,coords){
+  const ups=['https://quickmap.dot.ca.gov/data/lcs2way.json']; // Caltrans (CA)
+  const all=[];
+  for(const up of ups){
+    try{
+      const sep=proxy.includes('?')?'&':'?';
+      const j=await fetchJSON(`${proxy}${sep}url=${encodeURIComponent(up)}`);
+      const items=[]; extractGeoItems(j,items,0);
+      items.forEach(it=>{ const dist=distToPath(it.lat,it.lng,coords); if(dist<20) all.push(Object.assign({dist},it)); });
+    }catch(e){ state.errors.push('Drogi (proxy): '+e.message); return {error:e.message}; }
+  }
+  all.sort((a,b)=>a.dist-b.dist);
+  return {items:all.slice(0,15)};
+}
+
 /* ---------------------------------------------------------------- GPS */
 function locate(announce){
   if(!('geolocation' in navigator)){ state.errors.push('Brak geolokalizacji'); renderOrigin(); return Promise.resolve(null); }
@@ -440,6 +473,10 @@ async function loadAnalysis(){
             lat:(camp&&camp.best?camp.best.lat:mid.lat), lng:(camp&&camp.best?camp.best.lng:mid.lng), camp };
   }
 
+  // 6b) Drogi: zdarzenia/zamknięcia przez opcjonalny proxy (CORS).
+  const roadProxy=localStorage.getItem('rt2_roadproxy');
+  const roadEvents = roadProxy ? await fetchRoadEvents(roadProxy, toDest.coords.concat(toLA.coords)) : null;
+
   // 7) Pożary na mapę (z dystansem, rozmiarem, opanowaniem i poziomem ryzyka).
   let mapFires=[];
   if(fireList){ mapFires=fireList.map(f=>{
@@ -459,7 +496,7 @@ async function loadAnalysis(){
     fires:{ route:fireRoute, dest:fireDest, onward:fireOnward, hasData:!!fireList },
     quakes:{ dest:quakeDest, max:quakeMax, near:quakeNear, hasData:!!quakeList },
     geo:{ toDest:toDest.coords, toLA:toLA.coords, origin:o, dest:d, LA, mid: split?{lat:split.lat,lng:split.lng,name:(split.camp&&split.camp.best?split.camp.best.name:'punkt ~6h trasy')}:null },
-    mapFires, mapAlerts, firePerims:perimList,
+    mapFires, mapAlerts, firePerims:perimList, roadEvents,
     dataTime:new Date(),
   };
   state.loading=false; setBusy(false); renderAll();
@@ -720,15 +757,36 @@ function renderAll(){
     return `<div class="flex justify-between gap-2"><span class="text-gray-400 shrink-0">${i===0?'Start':i===A.routeWeather.length-1?'Cel':'~'+Math.round((w.frac||0)*100)+'%'} • ${fmtHourDate(w.eta)}</span><span class="text-right"><b>${Math.round(w.tempC)}°C</b> ${w.short}${w.precip?` ☔${w.precip}%`:''}${wind}${w.hasStorm?' ⛈️':''}</span></div>`;
   }).join('');
 
-  // DROGI (ręcznie)
-  document.getElementById('roadBody').innerHTML =
-    `<div>Automatyczne zamknięcia dróg nie są dostępne bez kluczy/CORS — sprawdź ręcznie tuż przed wyjazdem:</div>`
+  // DROGI: (1) alerty NWS sygnalizujące utrudnienia [działa od razu],
+  //        (2) realne zdarzenia przez opcjonalny proxy, (3) linki ręczne + konfiguracja.
+  const ROAD_RX=/high wind|dust storm|blowing dust|flash flood|flood|winter storm|ice storm|heavy snow|tornado/i;
+  const roadAl=[]; [['Dojazd',A.alerts.onRoute],['Cel',A.alerts.atDest],['Do LA',A.alerts.onward]]
+    .forEach(([lbl,list])=>list.forEach(al=>{ if(ROAD_RX.test(al.event)) roadAl.push(Object.assign({lbl},al)); }));
+  let rh='';
+  if(roadAl.length) rh+=`<div class="text-amber-300 mb-1">⚠️ Alerty mogące oznaczać utrudnienia/zamknięcia:</div>`
+      +roadAl.map(a=>`<div class="${a.severity==='warning'?'text-red-400':'text-yellow-300'}">${a.lbl}: ${a.event}</div>`).join('');
+  else rh+=`<div class="text-green-400">Brak pogodowych alertów drogowych (NWS) na trasie.</div>`;
+  if(A.roadEvents){
+    if(A.roadEvents.error) rh+=`<div class="mt-2 text-gray-500">Proxy dróg: błąd (${A.roadEvents.error}).</div>`;
+    else if(A.roadEvents.items&&A.roadEvents.items.length) rh+=`<div class="mt-2 text-amber-300">🚧 Zdarzenia przy trasie (CA, ${A.roadEvents.items.length}):</div>`
+        +A.roadEvents.items.slice(0,6).map(i=>`<div>${Math.round(i.dist)} km — ${String(i.desc).slice(0,90)}</div>`).join('');
+    else rh+=`<div class="mt-2 text-green-400">Proxy dróg (CA): brak zdarzeń przy trasie.</div>`;
+  }
+  rh+=`<div class="mt-2 text-gray-400">Potwierdź ręcznie tuż przed wyjazdem:</div>`
     +`<div class="mt-1 space-x-2">`
     +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://drivetexas.org/">TxDOT</a>`
     +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://www.nmroads.com/">NMRoads</a>`
     +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://az511.gov/">AZ511</a>`
-    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://quickmap.dot.ca.gov/">Caltrans</a></div>`
-    +`<div class="mt-1 text-gray-500">Alerty NWS typu „High Wind / Dust Storm / Flood” (wyżej) często sygnalizują utrudnienia na drodze.</div>`;
+    +`<a class="text-amber-400 underline" target="_blank" rel="noopener" href="https://quickmap.dot.ca.gov/">Caltrans</a></div>`;
+  rh+=`<details class="mt-3"><summary class="tap text-amber-400 text-xs">⚙️ Automatyczne zamknięcia (opcjonalne — Cloudflare Worker)</summary>`
+    +`<div class="mt-1 text-gray-400 text-[11px]">Wklej URL swojego proxy (instrukcja w README). Włącza zdarzenia drogowe dla Kalifornii (Caltrans).</div>`
+    +`<input id="roadProxyInput" type="url" inputmode="url" class="tap mt-1 w-full bg-gray-800 rounded px-2 outline-none focus:ring-2 ring-amber-500" placeholder="https://twoj-worker.workers.dev" value="${localStorage.getItem('rt2_roadproxy')||''}">`
+    +`<button id="roadProxySave" class="tap mt-1 bg-amber-500 text-gray-950 font-bold rounded px-3">Zapisz i sprawdź</button></details>`;
+  const roadBody=document.getElementById('roadBody'); roadBody.innerHTML=rh;
+  const rps=document.getElementById('roadProxySave');
+  if(rps) rps.addEventListener('click',()=>{ const v=document.getElementById('roadProxyInput').value.trim();
+    if(v) localStorage.setItem('rt2_roadproxy',v); else localStorage.removeItem('rt2_roadproxy');
+    if(state.destination) loadAnalysis(); });
 
   renderSources();
   renderRecent();
