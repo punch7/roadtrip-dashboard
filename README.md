@@ -193,10 +193,18 @@ Workera) — nie jest otwartym relayem.
 
 ```js
 const LA = { name:"Los Angeles (cel)", lat:34.0522, lng:-118.2437 }; // stały cel końcowy
-const MAX_DAILY_DRIVE_H = 6;   // powyżej → propozycja podziału na 2 dni (komfort z dziećmi)
+// Jazda pod drzemki dziecka: dwa okna dziennie + noc tylko awaryjnie.
+const NAP1_H = 1.5;            // pierwsza (krótsza) drzemka
+const NAP2_H = 2.5;            // druga (dłuższa) drzemka
+const COMFY_DAY_H = NAP1_H + NAP2_H; // ~4h komfortowej jazdy dziennie
+const NIGHT_MAX_EXTRA_H = 2.5; // ile można awaryjnie dobić nocą po dniu jazdy
 const MIN_DEPART_H = 5.5;      // nie sugeruj wyjazdu przed 5:30
 const AVG_SPEED_KMH = 88;      // prędkość do szacunku czasu, gdy OSRM padnie
 ```
+
+Apka liczy plan przejazdu w **oknach drzemek** (`napPlan`): np. 6 h jazdy →
+2 dni (dzień 1: 1,5 h + postój + 2,5 h = 4 h, nocleg na kempingu; dzień 2:
+reszta). Zmień `NAP1_H`/`NAP2_H`, by dopasować do rytmu dziecka.
 
 - **Zmiana celu końcowego** (gdyby trasa kończyła się gdzie indziej): edytuj
   `LA`.

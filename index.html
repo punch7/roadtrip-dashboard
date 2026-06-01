@@ -141,9 +141,26 @@
 
 /* ---------------------------------------------------------------- KONFIG */
 const LA = { name:"Los Angeles (cel)", lat:34.0522, lng:-118.2437 };
-const MAX_DAILY_DRIVE_H = 6;     // powyżej → podział na 2 dni (komfort z dziećmi)
+// Jazda pod drzemki Eleny: okno 1 ≈ 1,5h, okno 2 ≈ 2,5h → ~4h komfortowo/dzień.
+const NAP1_H = 1.5;              // pierwsza drzemka (krótsza)
+const NAP2_H = 2.5;              // druga drzemka (dłuższa)
+const COMFY_DAY_H = NAP1_H + NAP2_H; // ~4h dziennie w dwóch oknach
+const NIGHT_MAX_EXTRA_H = 2.5;  // ile można awaryjnie dobić nocą po dniu jazdy
+const MAX_DAILY_DRIVE_H = COMFY_DAY_H; // (zgodność wstecz)
 const MIN_DEPART_H = 5.5;        // nie wcześniej niż 5:30
 const AVG_SPEED_KMH = 88;        // fallback gdy OSRM padnie
+
+// Plan jazdy w oknach drzemek: dzieli łączny czas na dni po ~4h (1,5h + 2,5h).
+function napPlan(driveH){
+  const days=[]; let remaining=driveH, n=0;
+  while(remaining>0.05 && n<8){
+    n++; let driven=0; const windows=[];
+    [NAP1_H,NAP2_H].forEach((w,i)=>{ if(remaining<=0.05) return;
+      const use=Math.min(w,remaining); windows.push({nap:i+1,planned:w,use}); remaining-=use; driven+=use; });
+    days.push({day:n,driven,windows,leftover:remaining});
+  }
+  return {days, totalDays:days.length, comfyDay:COMFY_DAY_H};
+}
 
 /* ---------------------------------------------------------------- NARZĘDZIA */
 function haversine(lat1,lng1,lat2,lng2){
@@ -463,13 +480,14 @@ async function loadAnalysis(){
   let quakeDest=null,quakeMax=0; const quakeNear=[];
   if(quakeList) quakeList.forEach(q=>{ const dist=haversine(q.lat,q.lng,d.lat,d.lng); if(dist<200){quakeNear.push({...q,dist}); if(q.mag>quakeMax)quakeMax=q.mag; if(!quakeDest||dist<quakeDest.dist)quakeDest={mag:q.mag,dist,place:q.place,time:q.time};} });
 
-  // 6) Podział na dni + KEMPINGI (kamper, nie motele).
-  let split=null;
+  // 6) Plan jazdy pod drzemki + KEMPINGI (kamper, nie motele).
+  const plan=napPlan(toDest.hours);
   const destCamp=await findCampground(d.lat,d.lng);
-  if(toDest.hours>MAX_DAILY_DRIVE_H){
-    const mid=pointAtHours(toDest.coords,toDest.hours,MAX_DAILY_DRIVE_H);
+  let split=null;
+  if(plan.totalDays>1){
+    const mid=pointAtHours(toDest.coords,toDest.hours,plan.days[0].driven); // koniec dnia 1
     const camp=await findCampground(mid.lat,mid.lng);
-    split={ needed:true, day1H:Math.min(MAX_DAILY_DRIVE_H,toDest.hours), day2H:toDest.hours-MAX_DAILY_DRIVE_H,
+    split={ needed:true, plan,
             lat:(camp&&camp.best?camp.best.lat:mid.lat), lng:(camp&&camp.best?camp.best.lng:mid.lng), camp };
   }
 
@@ -488,7 +506,7 @@ async function loadAnalysis(){
 
   state.analysis={
     origin:o, destination:d,
-    drive:{ hours:toDest.hours, km:toDest.km, estimated:toDest.estimated, arrETA, split, destCamp,
+    drive:{ hours:toDest.hours, km:toDest.km, estimated:toDest.estimated, arrETA, split, destCamp, plan,
             departNow:now, optimal:optimalDeparture(toDest.hours) },
     onward:{ hours:toLA.hours, km:toLA.km, estimated:toLA.estimated },
     routeWeather, destArrival, overnightMin, laWeather,
@@ -681,17 +699,29 @@ function renderAll(){
   legCard('leg2','📍',`Na miejscu (${dn})`,V.leg2);
   legCard('leg3','🌴',`${dn} → LA`,V.leg3);
 
-  // CZAS / PODZIAŁ / KEMPINGI
+  // CZAS / PLAN POD DRZEMKI / KEMPINGI
   const campLine=(c)=> c&&c.best ? `🏕️ ${c.best.name}${c.best.rv?' (RV)':''} (~${Math.round(c.best.dist)} km)` : '🏕️ brak kempingu w pobliżu — sprawdź ręcznie';
-  let dt=`Jedzie się <b>${fmtH(A.drive.hours)}</b> (${Math.round(A.drive.km)} km)${A.drive.estimated?' — szacunek (OSRM niedostępny)':''}.`;
-  dt+=` Wyjazd teraz → dojazd ~${fmtHourDate(A.drive.arrETA)}.`;
-  if(A.drive.split){ dt+=`<div class="mt-2 text-amber-300">⚠️ Za długo na 1 dzień. Podziel na 2 dni:</div>`
-    +`<div>• Dzień 1: ~${fmtH(A.drive.split.day1H)} → nocleg: ${campLine(A.drive.split.camp)}</div>`
-    +`<div>• Dzień 2: ~${fmtH(A.drive.split.day2H)} do ${A.destination.name.split(',')[0]}</div>`;
-    if(A.drive.split.camp&&A.drive.split.camp.more&&A.drive.split.camp.more.length>1)
-      dt+=`<div class="text-gray-500 text-[11px]">Inne kempingi po drodze: ${A.drive.split.camp.more.slice(1,4).map(c=>c.name).join(' • ')}</div>`;
+  const napTxt=(w)=>`drzemka ${w.nap} (~${fmtH(w.use)}${w.use<w.planned?' z '+fmtH(w.planned):''})`;
+  const plan=A.drive.plan;
+  let dt=`Jedzie się <b>${fmtH(A.drive.hours)}</b> (${Math.round(A.drive.km)} km)${A.drive.estimated?' — szacunek (OSRM niedostępny)':''}. Czysty czas jazdy bez postojów → ~${fmtHourDate(A.drive.arrETA)}.`;
+  dt+=`<div class="mt-2 text-gray-400">🍼 Plan pod drzemki Eleny — komfortowo ~${fmtH(COMFY_DAY_H)}/dzień (okno 1 ~${fmtH(NAP1_H)} + postój + okno 2 ~${fmtH(NAP2_H)}). Nocna jazda tylko awaryjnie.</div>`;
+  if(plan && plan.totalDays<=1){
+    const ws=plan.days[0].windows.map(napTxt).join(' + postój + ');
+    dt+=`<div class="mt-1">✅ Zmieścicie się w <b>1 dniu</b>: ${ws}. Wyjedźcie, gdy Elena zaśnie.</div>`;
+  } else if(plan){
+    dt+=`<div class="mt-1 text-amber-300">⚠️ Za długo na 1 dzień z dzieckiem — rozłóżcie na ${plan.totalDays} dni:</div>`;
+    plan.days.forEach(day=>{
+      const ws=day.windows.map(napTxt).join(' + postój + ');
+      const dest = day.day===plan.totalDays ? `→ ${A.destination.name.split(',')[0]}` : (day.day===1?`→ nocleg: ${campLine(A.drive.split&&A.drive.split.camp)}`:'→ nocleg po drodze');
+      dt+=`<div>• Dzień ${day.day}: ${ws} (≈${fmtH(day.driven)}) ${dest}</div>`;
+    });
+    // opcja awaryjna: dobić resztę nocą tego samego dnia
+    const rest=A.drive.hours-plan.days[0].driven;
+    if(plan.totalDays===2 && rest<=NIGHT_MAX_EXTRA_H)
+      dt+=`<div class="mt-1 text-gray-500">Awaryjnie: zamiast nocować, dobijcie dziś ~${fmtH(rest)} po zmroku (tylko jeśli musicie).</div>`;
+    if(A.drive.split&&A.drive.split.camp&&A.drive.split.camp.more&&A.drive.split.camp.more.length>1)
+      dt+=`<div class="text-gray-500 text-[11px]">Inne kempingi na nocleg: ${A.drive.split.camp.more.slice(1,4).map(c=>c.name).join(' • ')}</div>`;
   }
-  else { dt+=` Mieści się w 1 dniu (komfort ≤${MAX_DAILY_DRIVE_H}h).`; }
   dt+=`<div class="mt-2">Nocleg przy celu: ${campLine(A.drive.destCamp)}</div>`;
   dt+=`<div class="mt-1 text-gray-400">Dalej do LA: ${fmtH(A.onward.hours)} (${Math.round(A.onward.km)} km).</div>`;
   document.getElementById('driveBody').innerHTML=dt;
@@ -845,7 +875,7 @@ renderRecent();
 locate(false);
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
-window.__rt={state,computeVerdict,assessLeg,haversine,geocode,routeOSRM,loadAnalysis,fireTier};
+window.__rt={state,computeVerdict,assessLeg,haversine,geocode,routeOSRM,loadAnalysis,fireTier,napPlan};
 </script>
 </body>
 </html>
