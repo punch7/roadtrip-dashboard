@@ -185,9 +185,25 @@ Od teraz przy każdym wyszukaniu apka pobiera zdarzenia Caltrans w pobliżu tras
 `localStorage`. Proxy przepuszcza tylko dozwolone hosty (lista `ALLOW` w pliku
 Workera) — nie jest otwartym relayem.
 
-> Uwaga: niezawodnie działa **Kalifornia** (Caltrans, bez klucza). Teksas, Nowy
-> Meksyk i Arizona często wymagają darmowego tokenu API — wtedy trzeba go dodać
-> do zapytania w `cloudflare-worker.js` (host już jest na liście ALLOW).
+### Tokeny dla pozostałych stanów (AZ / NM / TX)
+
+Kalifornia (`ca`) działa bez tokenu. Arizona, Nowy Meksyk i Teksas wymagają
+darmowego klucza API. Worker (`cloudflare-worker.js`) obsługuje `?feed=az|nm|tx`
+i bierze token ze zmiennych środowiskowych — **nie trzymamy go w przeglądarce**.
+
+1. Zarejestruj darmowy klucz developerski:
+   - **Arizona (AZ511):** https://az511.gov/developers/doc → „Get API Key”.
+   - **Nowy Meksyk (NMRoads):** https://nmroads.com/developers/doc → „Get API Key”.
+   - **Teksas:** TxDOT nie ma prostego publicznego API; jeśli masz własny
+     endpoint GeoJSON, wpisz go jako zmienną `TXDOT_URL`.
+2. W panelu Cloudflare: **Worker → Settings → Variables and Secrets** → dodaj:
+   `AZ511_KEY = twój_klucz`, `NMROADS_KEY = twój_klucz` (i ew. `TXDOT_URL`).
+   Zapisz/Deploy.
+3. Gotowe — aplikacja sama odpytuje `ca`, `az`, `nm`, `tx` i pokazuje zdarzenia
+   przy trasie. Nieskonfigurowane stany są po prostu pomijane.
+
+> Niezależnie od tokenów: **pogodowe zamknięcia (high wind, dust storm, flood,
+> winter storm, tornado) działają automatycznie w każdym stanie** z alertów NWS.
 
 ## Konfiguracja (na górze `<script>` w `index.html`)
 
